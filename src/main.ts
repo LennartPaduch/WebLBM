@@ -8,6 +8,9 @@ const gpu = await GPUController.create().catch((error) => {
   return null;
 });
 if (!gpu) {
+  const wrapper = document.getElementById("wrapper");
+  wrapper!.classList = "hidden";
+
   const errorMsg = document.createElement("div");
   errorMsg.textContent = e;
   errorMsg.className = "bg-red-400 rounded";
