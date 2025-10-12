@@ -2,20 +2,9 @@ import { CanvasPainter } from "./canvas";
 import { GPUController } from "./GPUController";
 import { LBM, VisColormaps, VisTypes } from "./LBM";
 
-let e: string = "";
-const gpu = await GPUController.create().catch((error) => {
-  e = error instanceof Error ? error.message : String(error);
-  return null;
-});
-if (!gpu) {
-  const wrapper = document.getElementById("wrapper");
-  wrapper!.classList = "hidden";
+try {
+  const gpu = await GPUController.create();
 
-  const errorMsg = document.createElement("div");
-  errorMsg.textContent = e;
-  errorMsg.className = "bg-red-400 rounded";
-  document.body.appendChild(errorMsg);
-} else {
   const Nx = 1 << 10;
   const Ny = 1 << 10;
   const lbm = new LBM(Nx, Ny, gpu);
@@ -166,4 +155,41 @@ if (!gpu) {
   window.addEventListener("resize", resizeCanvasSquare);
   window.addEventListener("orientationchange", resizeCanvasSquare);
   resizeCanvasSquare();
+} catch (e) {
+  showError(e);
+}
+
+function showError(message: unknown) {
+  document.getElementById("wrapper")?.classList.add("hidden");
+
+  const root = document.createElement("div");
+  root.className = "fixed inset-0 z-50 grid place-items-center p-4";
+
+  const card = document.createElement("div");
+  card.setAttribute("role", "alert");
+  card.className =
+    "w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-xl " +
+    "dark:border-zinc-800 dark:bg-zinc-900";
+
+  const safe =
+    typeof message === "string"
+      ? message
+      : message instanceof Error
+      ? message.message
+      : "Something went wrong.";
+
+  card.innerHTML = `
+    <div class="p-4 sm:p-5">
+      <div class="flex items-start gap-3">
+        <span class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full
+          bg-red-100 text-red-600 dark:bg-red-900/30">!</span>
+        <p class="text-sm text-zinc-700 dark:text-zinc-200 break-words"></p>
+      </div>
+    </div>
+  `;
+
+  (card.querySelector("p") as HTMLParagraphElement).textContent = String(safe);
+
+  root.appendChild(card);
+  document.body.appendChild(root);
 }
