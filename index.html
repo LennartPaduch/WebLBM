@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebGPU LBM — Minimal Starter</title>
+    <link href="/src/tailwind.css" rel="stylesheet">
+</head>
+
+
+<body class="h-screen w-screen bg-black">
+    <div class="relative h-screen w-screen overflow-hidden">
+        <canvas id="canvas" class="block mx-auto w-[min(100vw,100vh)] h-[min(100vw,100vh)]"></canvas>
+
+        <!-- Overlay settings so they don't affect canvas size -->
+        <div id="settings" class="absolute top-3 left-3 bg-gray-800/80 text-white p-3 rounded-lg space-y-3">
+            <button id="restart-btn" aria-label="Restart Animation"
+                class= "flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600">Restart Sim</button>
+            <button id="reset-btn" aria-label="Reset Canvas"
+                class= "flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600">Reset Canvas</button>
+            <div>
+                <label for="colormap-select">Select Colormap:</label>
+                <select name="colormaps" id="colormap-select"> ´
+                </select>
+            </div>
+
+            <div>
+                <label for="visType-select">Select which property to render:</label>
+                <select name="visTypes" id="visType-select"> ´
+                </select>
+            </div>
+
+            <div>Paint Options</div>
+            <div id="paint-settings" class="flex gap-4 flex-col ">
+              
+            </div>            
+        </div>
+    </div>
+    <script type="module" src="src/main.ts"></script>
+</body>
+</body>
+
+</html>
