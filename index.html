@@ -10,7 +10,7 @@
 
 
 <body class="h-screen w-screen bg-black">
-    <div class="relative h-screen w-screen overflow-hidden">
+    <div class="relative h-screen w-screen overflow-hidden" id="wrapper">
         <canvas id="canvas" class="block mx-auto w-[min(100vw,100vh)] h-[min(100vw,100vh)]"></canvas>
 
         <!-- Overlay settings so they don't affect canvas size -->
@@ -21,13 +21,13 @@
                 class= "flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600">Reset Canvas</button>
             <div>
                 <label for="colormap-select">Select Colormap:</label>
-                <select name="colormaps" id="colormap-select"> ´
+                <select name="colormaps" id="colormap-select"> 
                 </select>
             </div>
 
             <div>
                 <label for="visType-select">Select which property to render:</label>
-                <select name="visTypes" id="visType-select"> ´
+                <select name="visTypes" id="visType-select"> 
                 </select>
             </div>
 
