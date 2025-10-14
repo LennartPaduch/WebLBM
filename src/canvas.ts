@@ -1,4 +1,3 @@
-// CanvasPainter.ts
 import { CELL } from "./LBM";
 
 export type RowSpan = { y: number; x0: number; x1: number };

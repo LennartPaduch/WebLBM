@@ -43,7 +43,13 @@ export class GPUController {
     }
 
     const canF16 = adapter?.features.has("shader-f16") ?? false;
+
+    if (!canF16) {
+      throw new Error("Your hardware/browser does not support F16.");
+    }
+
     const limits = adapter.limits;
+
     const device = await adapter.requestDevice({
       requiredFeatures: canF16 ? ["shader-f16"] : [],
       requiredLimits: {
@@ -55,6 +61,7 @@ export class GPUController {
           limits.maxComputeWorkgroupsPerDimension,
         maxComputeInvocationsPerWorkgroup:
           limits.maxComputeInvocationsPerWorkgroup,
+        maxTextureDimension2D: limits.maxTextureDimension2D,
       },
     });
 
