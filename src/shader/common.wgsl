@@ -2,7 +2,7 @@ enable f16;
 
 const CELL_FLUID  : u32 = 0u;
 const CELL_SOLID  : u32 = 1u << 0;
-const CELL_EQ     : u32 = 1u << 1;  // TYPE_E (equilibrium BC: inlet/outlet)
+const CELL_EQ     : u32 = 1u << 1;  // equilibrium BC: inlet/outlet
 
 const WGX = 32u;
 const WGY = 32u; 
@@ -22,14 +22,6 @@ const OPP : array<u32,9> = array<u32,9>(
   7u  // NW <-> SE
 );
 
-// Opposite pairs
-const PAIRS = array<vec2<u32>,4>(
-  vec2<u32>(1u, 2u), // E <-> W
-  vec2<u32>(3u, 4u), // N <-> S
-  vec2<u32>(5u, 6u), // NE <-> SW
-  vec2<u32>(7u, 8u)  // SE <-> NW
-);
-
 const W0 : f32 = 4.0 / 9.0;
 const WS : f32 = 1.0 / 9.0;
 const WE : f32 = 1.0 / 36.0;
@@ -40,18 +32,18 @@ const FP16S_SCALE      : f32 = 32768.0;          // 2^15
 const FP16S_INV_SCALE  : f32 = 1.0 / 32768.0;    // 2^-15
 
 fn decode_f16s(p: f16) -> f32 {
-  return f32(p) * FP16S_INV_SCALE;          // unpack + downscale
+  return f32(p) * FP16S_INV_SCALE; // unpack + downscale
 }
 
 fn store_f16s(p: ptr<storage, f16, read_write>, v: f32) {
-  *p = f16(v * FP16S_SCALE);                 // upscale + pack (round-to-nearest-even)
+  *p = f16(v * FP16S_SCALE);       // upscale + pack
 }
 
-fn is_fluid(m:u32)  -> bool { return (m == 0);}
-fn is_solid(m:u32)  -> bool { return (m & CELL_SOLID)  != 0u; }
-fn is_eq(m:u32)     -> bool { return (m & CELL_EQ)     != 0u; } // TYPE_E (equilibrium BC: inlet/outlet)
+fn is_fluid(m:u32) -> bool { return (m == 0);}
+fn is_solid(m:u32) -> bool { return (m & CELL_SOLID)  != 0u; }
+fn is_eq(m:u32)    -> bool { return (m & CELL_EQ)     != 0u; } // equilibrium BC: inlet/outlet
 
-// Addressing (SoA): f[dir*C + cell]
+// SoA: f[dir*C + cell]
 fn addr(dir:u32, cell:u32, C:u32) -> u32 { return dir*C + cell; }
 
 fn coordinates(cell: u32, Nx:u32) -> vec2<u32> {
@@ -60,7 +52,6 @@ fn coordinates(cell: u32, Nx:u32) -> vec2<u32> {
   return vec2<u32>(x, y);
 }
 
-// In-bounds check (non-periodic)
 fn in_bounds(ix:i32, iy:i32, Nx:u32, Ny:u32) -> bool {
   return (ix >= 0 && iy >= 0 && ix < i32(Nx) && iy < i32(Ny));
 }
@@ -138,9 +129,9 @@ fn feq_d2q9_shifted(rho_in: f32, u_in: vec2<f32>) -> array<f32, 9> {
   out[3] = rhos * (0.5 * (uy*uy + c3) + uy) + rhom1s; // N  ( +y)
   out[4] = rhos * (0.5 * (uy*uy + c3) - uy) + rhom1s; // S  ( -y)
 
-  out[5] = rhoe * (0.5 * (u_plus*u_plus  + c3) +  u_plus ) + rhom1e; // NE
+  out[5] = rhoe * (0.5 * (u_plus*u_plus  + c3) +  u_plus ) + rhom1e;  // NE
   out[8] = rhoe * (0.5 * (u_minus*u_minus + c3) -  u_minus) + rhom1e; // NW
-  out[6] = rhoe * (0.5 * (u_plus*u_plus  + c3) -  u_plus ) + rhom1e; // SW
+  out[6] = rhoe * (0.5 * (u_plus*u_plus  + c3) -  u_plus ) + rhom1e;  // SW
   out[7] = rhoe * (0.5 * (u_minus*u_minus + c3) +  u_minus) + rhom1e; // SE
 
   return out;

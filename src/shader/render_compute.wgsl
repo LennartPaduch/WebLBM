@@ -1,9 +1,4 @@
-// -----------------------------------------------------------------------------
-// LBM Heatmap Render (WGSL) — EP-consistent load, Viridis/Turbo colormaps
-// P.mode: 0=rho, 1=|u|
-// P.cmap: 0=Viridis, 1=Turbo
-// P.vmin/vmax: linear range for normalization
-// -----------------------------------------------------------------------------
+#include common;
 
 struct VisParams {
   Nx:        u32,
@@ -11,7 +6,7 @@ struct VisParams {
   cellCount: u32,
   mode:      u32, // 0=rho, 1=|u|
   cmap:      u32, // 0=Viridis, 1=Turbo
-  vmin:      f32,
+  vmin:      f32, // vmin/vmas linear range for normalization
   vmax:      f32
 };
 
@@ -21,9 +16,8 @@ struct StepDynamic {
   _pad:   vec3<u32> // pad to 16 bytes to be uniform-safe
 };
 
-
 // --- bindings ----------------------------------------------------------------
-@group(0) @binding(0) var<storage, read>        f    : array<f16>;  // SoA: f[dir*C + cell]
+@group(0) @binding(0) var<storage, read>        f    : array<f16>; // SoA: f[dir*C + cell]
 @group(0) @binding(1) var<uniform>              P    : VisParams;
 @group(0) @binding(2) var<uniform>              Pd   : StepDynamic;
 @group(0) @binding(3) var<storage, read>        mask : array<u32>;
@@ -49,8 +43,7 @@ fn normalize01(s:f32, vmin:f32, vmax:f32) -> f32 {
   return clamp((s - vmin) / d, 0.0, 1.0);
 }
 
-// ---- small LUT samplers for professional colormaps ---------------------------
-
+// Colormap lookup tables
 const VIRIDIS_LUT : array<vec3<f32>, 10> = array<vec3<f32>,10>(
   vec3<f32>(0.267004, 0.004874, 0.329415),
   vec3<f32>(0.282327, 0.094955, 0.417331),
@@ -106,7 +99,7 @@ fn render(@builtin(global_invocation_id) gid: vec3<u32>) {
     return;
   } else if (mask[cell] == CELL_EQ) {
     textureStore(outputTex, vec2<i32>(i32(gid.x), i32(gid.y)),
-                 vec4<f32>(1.0, 0.0, 0.0, 1.0)); // red
+                 vec4<f32>(1.0, 0.0, 0.0, 1.0));   // red inlets/outets
     return;
   }
 
@@ -126,7 +119,7 @@ fn render(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   ux /= rho; uy /= rho;
 
-  // Choose scalar (fixed: mode 0=rho, 1=|u|)
+  // mode 0=rho, 1=|u|
   let speed = sqrt(ux*ux + uy*uy);
   let s = select(speed, rho, P.mode == 1u);
 
