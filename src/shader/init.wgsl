@@ -1,5 +1,3 @@
-#include common;
-
 struct Params {
   Nx:u32,
   Ny:u32, 

@@ -1,8 +1,9 @@
 import type { GPUController } from "./GPUController";
-import initWGSL from "./shader/init.wgsl";
-import stepWGSL from "./shader/step.wgsl";
-import blitWGSL from "./shader/blit.wgsl";
-import renderComputeWGSL from "./shader/render_compute.wgsl";
+import initWGSL from "./shader/init.wgsl?raw";
+import stepWGSL from "./shader/step.wgsl?raw";
+import blitWGSL from "./shader/blit.wgsl?raw";
+import renderComputeWGSL from "./shader/render_compute.wgsl?raw";
+import commonWgsl from "./shader/common.wgsl?raw";
 
 export const CELL = {
   FLUID: 0,
@@ -167,11 +168,11 @@ export class LBM {
     // ---------- pipelines ----------
     const modInit = device.createShaderModule({
       label: "init.wgsl",
-      code: initWGSL,
+      code: commonWgsl + "\n" + initWGSL,
     });
     const modStep = device.createShaderModule({
       label: "step.wgsl",
-      code: stepWGSL,
+      code: commonWgsl + "\n" + stepWGSL,
     });
 
     this.#pipeInit = device.createComputePipeline({
@@ -236,7 +237,7 @@ export class LBM {
     // ---- compile viz shaders ----
     const visModule = device.createShaderModule({
       label: "render_compute",
-      code: renderComputeWGSL,
+      code: commonWgsl + "\n" + renderComputeWGSL,
     });
     const blitModule = device.createShaderModule({
       label: "blit",

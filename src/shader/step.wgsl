@@ -1,5 +1,3 @@
-#include common;
-
 struct StepParams {
   Nx:        u32,
   Ny:        u32,

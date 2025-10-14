@@ -1,5 +1,3 @@
-#include common;
-
 struct VisParams {
   Nx:        u32,
   Ny:        u32,
