@@ -28,8 +28,8 @@ const WE : f32 = 1.0 / 36.0;
 
 const Q  : u32 = 9u;
 
-const FP16S_SCALE      : f32 = 32768.0;          // 2^15
-const FP16S_INV_SCALE  : f32 = 1.0 / 32768.0;    // 2^-15
+const FP16S_SCALE      : f32 = 32768.0;       // 2^15
+const FP16S_INV_SCALE  : f32 = 1.0 / 32768.0; // 2^-15
 
 fn decode_f16s(p: f16) -> f32 {
   return f32(p) * FP16S_INV_SCALE; // unpack + downscale
@@ -56,6 +56,7 @@ fn in_bounds(ix:i32, iy:i32, Nx:u32, Ny:u32) -> bool {
   return (ix >= 0 && iy >= 0 && ix < i32(Nx) && iy < i32(Ny));
 }
 
+// precompute indices (periodic boundary conditions)
 fn calculate_indices(
   cell: u32,
   x0:   ptr<function, u32>, 
@@ -63,7 +64,8 @@ fn calculate_indices(
   xm:   ptr<function, u32>, 
   y0:   ptr<function, u32>, 
   yp:   ptr<function, u32>, 
-  ym:   ptr<function, u32>){
+  ym:   ptr<function, u32>
+  ){
 
   let xy: vec2<u32> = coordinates(cell, P.Nx);
   *x0 = xy.x;
@@ -74,22 +76,30 @@ fn calculate_indices(
   *ym = ((xy.y + P.Ny - 1u) % P.Ny) * P.Nx;
 }
 
+// compute neighbor indices
 fn get_neighbors(cell: u32) -> array<u32, 9>{
   var j: array<u32, 9>;
 
-  var x0: u32;
-  var xp: u32;
-  var xm: u32;
-  var y0: u32;
-  var yp: u32;
-  var ym: u32;
+  var x0: u32; // x of current cell
+  var xp: u32; // x+1 (wrapped)
+  var xm: u32; // x-1 (wrapped)
+  var y0: u32; // row offset for y
+  var yp: u32; // row offset for y+1 (wrapped)
+  var ym: u32; // row offset for y-1 (wrapped)
 
-  calculate_indices(cell, &x0, &xp, &xm, &y0, &yp, &ym);
+  calculate_indices(cell, &x0, &xp, &xm, &y0, &yp, &ym); //precomputes wrapped x/y indices for periodic BCs
+  
+  // Cardinal neighbors (dx, dy):
+  j[1] = xp + y0; // (+1,  0): East
+  j[2] = xm + y0; // (-1,  0): West
+  j[3] = x0 + yp; // ( 0, +1): North
+  j[4] = x0 + ym; // ( 0, -1): South
 
-  j[1] = xp+y0; j[2] = xm+y0; // +00 -00
-  j[3] = x0+yp; j[4] = x0+ym; // 0+0 0-0
-  j[5] = xp+yp; j[6] = xm+ym; // ++0 --0
-  j[7] = xp+ym; j[8] = xm+yp; // +-0 -+0
+  // Diagonal neighbors (dx, dy):
+  j[5] = xp + yp; // (+1, +1): North-East
+  j[6] = xm + ym; // (-1, -1): South-West
+  j[7] = xp + ym; // (+1, -1): South-East
+  j[8] = xm + yp; // (-1, +1): North-West
 
   return j;
 }

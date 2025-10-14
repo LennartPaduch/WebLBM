@@ -68,7 +68,7 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (is_solid(m)) { return; }
 
   // --- Load (Esoteric Pull): parity-controlled self/neighbor indices
-  let j  = get_neighbors(cell);
+  let j  = get_neighbors(cell); // indices of the 8 neighbors (in D2Q9) around 'cell'
   var fi = load_f_ep_implicit(cell, Pd.parity, C, P.Nx, P.Ny, j);
 
   // --- Collision inputs
