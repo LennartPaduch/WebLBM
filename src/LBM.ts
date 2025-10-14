@@ -1,9 +1,8 @@
 import type { GPUController } from "./GPUController";
-import initWGSL from "./shader/init.wgsl?raw"; // entry: initialize
-import stepWGSL from "./shader/step.wgsl?raw"; // entry: step
-import blitWGSL from "./shader/blit.wgsl?raw";
-import renderComputeWGSL from "./shader/render_compute.wgsl?raw";
-import commonWGSL from "./shader/common.wgsl?raw";
+import initWGSL from "./shader/init.wgsl";
+import stepWGSL from "./shader/step.wgsl";
+import blitWGSL from "./shader/blit.wgsl";
+import renderComputeWGSL from "./shader/render_compute.wgsl";
 
 export const CELL = {
   FLUID: 0,
@@ -18,8 +17,8 @@ export const VisTypes = {
 type VisType = (typeof VisTypes)[keyof typeof VisTypes];
 
 export const VisColormaps = {
-  TURBO: 1, // rho
-  VIRIDIS: 0, // |u|
+  TURBO: 1,
+  VIRIDIS: 0,
 } as const;
 type VisColormap = (typeof VisColormaps)[keyof typeof VisColormaps];
 
@@ -40,7 +39,7 @@ export class LBM {
   // physics
   #tau = 0.7;
   #omega = 1 / this.#tau;
-  #inletUx = 0.03;
+  #inletUx = 0.05;
   #inletUy = 0;
 
   #WORKGROUP_SIZE = 32;
@@ -142,14 +141,13 @@ export class LBM {
 
     this.#writeInitUniform({
       rho0: 1,
-      u0x: this.#inletUx,
-      u0y: this.#inletUy,
-      useMask: 1,
+      inletUX: this.#inletUx,
+      inletUY: this.#inletUy,
     });
 
     this.#u = device.createBuffer({
       label: "global u array",
-      size: this.#cellCount * 4 * 2, // 2*C*sizeof(f32) =2C*4
+      size: this.#cellCount * 4, // 2*C*sizeof(f16) = C*4
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -157,7 +155,7 @@ export class LBM {
     });
     this.#rho = device.createBuffer({
       label: "global rho array",
-      size: this.#cellCount * 4,
+      size: this.#cellCount * 2,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -169,11 +167,11 @@ export class LBM {
     // ---------- pipelines ----------
     const modInit = device.createShaderModule({
       label: "init.wgsl",
-      code: commonWGSL + "\n" + initWGSL,
+      code: initWGSL,
     });
     const modStep = device.createShaderModule({
       label: "step.wgsl",
-      code: commonWGSL + "\n" + stepWGSL,
+      code: stepWGSL,
     });
 
     this.#pipeInit = device.createComputePipeline({
@@ -238,7 +236,7 @@ export class LBM {
     // ---- compile viz shaders ----
     const visModule = device.createShaderModule({
       label: "render_compute",
-      code: commonWGSL + "\n" + renderComputeWGSL,
+      code: renderComputeWGSL,
     });
     const blitModule = device.createShaderModule({
       label: "blit",
@@ -293,19 +291,18 @@ export class LBM {
     const device = this.#gpu.device;
 
     // ---------- run the GPU init once ----------
-    {
-      const enc = device.createCommandEncoder({ label: "init enc" });
-      const pass = enc.beginComputePass({ label: "init pass" });
-      pass.setPipeline(this.#pipeInit);
-      pass.setBindGroup(0, this.#bgInit);
-      pass.dispatchWorkgroups(
-        Math.ceil(this.#Nx / this.#WORKGROUP_SIZE),
-        Math.ceil(this.#Ny / this.#WORKGROUP_SIZE),
-        1
-      );
-      pass.end();
-      device.queue.submit([enc.finish()]);
-    }
+    const enc = device.createCommandEncoder({ label: "init enc" });
+    const pass = enc.beginComputePass({ label: "init pass" });
+    pass.setPipeline(this.#pipeInit);
+    pass.setBindGroup(0, this.#bgInit);
+    pass.dispatchWorkgroups(
+      Math.ceil(this.#Nx / this.#WORKGROUP_SIZE),
+      Math.ceil(this.#Ny / this.#WORKGROUP_SIZE),
+      1
+    );
+    pass.end();
+    device.queue.submit([enc.finish()]);
+
     this.#parity = 0;
     this.#tick = 0;
   };
@@ -346,7 +343,7 @@ export class LBM {
 
     // Guard against tiny/invalid windows
     if (y1 < y0) {
-      [y0, y1] = [1, Math.min(this.#Ny - 2, 1)]; // degenerate 1-row window if needed
+      [y0, y1] = [1, Math.min(this.#Ny - 2, 1)];
     }
 
     // inlet: left column, y in [y0..y1]
@@ -498,16 +495,15 @@ export class LBM {
     o += 4; // vmin
     dv.setFloat32(o, opts.max, true);
     o += 4; // vmax
-    o += 4; // _pad0
+    //o += 4; // _pad0
     this.#gpu.device.queue.writeBuffer(this.#visUniform, 0, dv.buffer);
   };
 
   // ---------- uniforms writers ----------
   #writeInitUniform = (opts: {
     rho0: number;
-    u0x: number;
-    u0y: number;
-    useMask: number;
+    inletUX: number;
+    inletUY: number;
   }): void => {
     const dv = new DataView(new ArrayBuffer(256));
     let o = 0;
@@ -515,17 +511,11 @@ export class LBM {
     o += 4;
     dv.setUint32(o, this.#Ny, true);
     o += 4;
-    dv.setUint32(o, this.#cellCount, true);
-    o += 4;
     dv.setUint32(o, this.#Q, true);
     o += 4;
-    dv.setFloat32(o, opts.rho0, true);
+    dv.setFloat32(o, opts.inletUX, true);
     o += 4;
-    dv.setFloat32(o, opts.u0x, true);
-    o += 4;
-    dv.setFloat32(o, opts.u0y, true);
-    o += 4;
-    dv.setUint32(o, opts.useMask, true);
+    dv.setFloat32(o, opts.inletUY, true);
 
     this.#gpu.device.queue.writeBuffer(this.#initUniform, 0, dv.buffer);
   };
@@ -552,8 +542,8 @@ export class LBM {
     o += 4;
 
     dv.setFloat32(o, this.#omega, true);
-    o += 4;
-    o += 12; // _pad0, _pad1, _pad2
+    // o += 4;
+    // o += 12; // _pad0, _pad1, _pad2
 
     this.#gpu.device.queue.writeBuffer(this.#stepUniform, 0, dv.buffer);
   };
