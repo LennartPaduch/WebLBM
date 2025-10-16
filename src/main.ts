@@ -4,26 +4,74 @@ import { LBM, VisColormaps, VisTypes } from "./LBM";
 
 try {
   const gpu = await GPUController.create();
+  const maxCells = Math.floor((0.95 * gpu.adapter.limits.maxBufferSize) / 8);
+  const maxDim = Math.floor(Math.sqrt(maxCells));
 
-  const Nx = 1 << 10;
-  const Ny = 1 << 10;
-  const lbm = new LBM(Nx, Ny, gpu);
-  await lbm.init();
-  const canvas = document.getElementById("canvas") as HTMLCanvasElement;
-  const painter = new CanvasPainter({
-    canvas,
-    Nx,
-    Ny,
-    onPaint: (rows, value) => lbm.applyMaskRows(rows, value),
-  });
-  painter.enable();
-  lbm.run();
+  // Lattice-Grid resolution presets (i.e. 1024x1024 ~= 1E6 cells)
+  // Will be filtered by max. supported buffer (maxDim)
+  const PRESETS = [64, 96, 128, 192, 256, 384, 512, 768, 1024, 2048];
 
-  const restartBtn = document.getElementById("restart-btn");
-  restartBtn?.addEventListener("click", () => lbm.run());
+  const MAX_CAP = 1 << 11; // 2048 (the actual cap can be higher, but for D2Q9 there is no need for that)
+  const SOFT_CAP = 1 << 10; // 1024
 
-  const resetCanvasBtn = document.getElementById("reset-btn");
-  resetCanvasBtn?.addEventListener("click", () => lbm.resetMask());
+  function pickDefaultN(): number {
+    const sizes = allowedSizes(); // respects MAX_CAP & maxDim
+    const hardDefault = sizes.length
+      ? sizes[sizes.length - 1] // largest allowed
+      : Math.min(64, maxDim, MAX_CAP); // sane fallback
+
+    // Prefer the soft cap if we'd otherwise pick the hard max
+    if (hardDefault >= MAX_CAP) return Math.min(SOFT_CAP, MAX_CAP);
+
+    return hardDefault;
+  }
+
+  function allowedSizes(): number[] {
+    return PRESETS.filter((n) => n <= maxDim && n <= MAX_CAP);
+  }
+
+  // mutable references so event handlers always use the latest instances.
+  let N = pickDefaultN();
+  let lbm: LBM;
+  let painter: CanvasPainter;
+  let canvas = document.getElementById("canvas") as HTMLCanvasElement;
+
+  // UI:
+  const paintSettings: HTMLDivElement = document.getElementById(
+    "paint-settings"
+  ) as HTMLDivElement;
+
+  const resWrapper = document.createElement("div");
+  resWrapper.className = "flex items-center gap-3";
+
+  const resLabel = document.createElement("label");
+  resLabel.textContent = "Resolution (N×N):";
+  resLabel.className = "text-sm font-medium text-gray-300 min-w-fit";
+  resLabel.htmlFor = "resolution-select";
+
+  const resSelect = document.createElement("select");
+  resSelect.id = "resolution-select";
+  resSelect.className =
+    "w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer hover:bg-gray-650 transition-colors";
+
+  function refreshResolutionOptions(selected?: number) {
+    resSelect.innerHTML = "";
+    const sizes = allowedSizes();
+    // Ensure there is at least one option
+    if (sizes.length === 0) sizes.push(Math.min(64, maxDim, MAX_CAP));
+    for (const size of sizes) {
+      const opt = document.createElement("option");
+      opt.value = String(size);
+      opt.textContent = `${size} × ${size}`;
+      opt.className = "bg-gray-700 text-white";
+      if (selected ? size === selected : size === N) opt.selected = true;
+      resSelect.appendChild(opt);
+    }
+  }
+
+  resWrapper.appendChild(resLabel);
+  resWrapper.appendChild(resSelect);
+  paintSettings.prepend(resWrapper);
 
   const colormapSelect = document.getElementById(
     "colormap-select"
@@ -32,7 +80,6 @@ try {
     colormapSelect.innerHTML = "";
     colormapSelect.className =
       "w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer hover:bg-gray-650 transition-colors";
-
     for (const [label, value] of Object.entries(VisColormaps)) {
       const opt = document.createElement("option");
       opt.value = String(value);
@@ -40,10 +87,6 @@ try {
       opt.className = "bg-gray-700 text-white";
       colormapSelect.appendChild(opt);
     }
-
-    colormapSelect.addEventListener("change", () => {
-      lbm.setVisColormap(Number(colormapSelect.value) as any);
-    });
   }
 
   const visTypeSelect = document.getElementById(
@@ -53,7 +96,6 @@ try {
     visTypeSelect.innerHTML = "";
     visTypeSelect.className =
       "w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer hover:bg-gray-650 transition-colors";
-
     for (const [label, value] of Object.entries(VisTypes)) {
       const opt = document.createElement("option");
       opt.value = String(value);
@@ -61,18 +103,55 @@ try {
       opt.className = "bg-gray-700 text-white";
       visTypeSelect.appendChild(opt);
     }
-
-    visTypeSelect.addEventListener("change", () => {
-      lbm.setVisType(Number(visTypeSelect.value) as any);
-    });
   }
 
-  // Paint Options
-  const paintSettings: HTMLDivElement = document.getElementById(
-    "paint-settings"
-  ) as HTMLDivElement;
+  // Helpers to (re)create simulation & painter for a given N
+  async function recreate(NxNy: number) {
+    try {
+      (lbm as any)?.stop?.();
+      await (lbm as any)?.dispose?.();
+      (painter as any)?.disable?.();
+      (painter as any)?.destroy?.();
+    } catch (e) {
+      showError(e);
+    }
 
-  // Brush Mode Buttons
+    lbm = new LBM(NxNy, NxNy, gpu);
+    await lbm.init();
+
+    painter = new CanvasPainter({
+      canvas,
+      Nx: NxNy,
+      Ny: NxNy,
+      onPaint: (rows, value) => lbm.applyMaskRows(rows, value),
+    });
+    painter.enable();
+
+    if (colormapSelect) lbm.setVisColormap(Number(colormapSelect.value) as any);
+    if (visTypeSelect) lbm.setVisType(Number(visTypeSelect.value) as any);
+
+    lbm.run();
+
+    resizeCanvasSquare();
+  }
+
+  refreshResolutionOptions(N);
+  await recreate(N);
+
+  const restartBtn = document.getElementById("restart-btn");
+  restartBtn?.addEventListener("click", () => lbm.run());
+
+  const resetCanvasBtn = document.getElementById("reset-btn");
+  resetCanvasBtn?.addEventListener("click", () => lbm.resetMask());
+
+  colormapSelect?.addEventListener("change", () => {
+    lbm.setVisColormap(Number(colormapSelect.value) as any);
+  });
+  visTypeSelect?.addEventListener("change", () => {
+    lbm.setVisType(Number(visTypeSelect.value) as any);
+  });
+
+  // Brush UI
   const brushModeBtnWrapper = document.createElement("div");
   brushModeBtnWrapper.className = "flex gap-2";
 
@@ -108,7 +187,7 @@ try {
   brushModeBtnWrapper.appendChild(eraseModeBtn);
   paintSettings.appendChild(brushModeBtnWrapper);
 
-  // Brush Size Slider
+  // Brush size
   const brushSizeSliderWrapper = document.createElement("div");
   brushSizeSliderWrapper.className = "flex items-center gap-3";
 
@@ -143,8 +222,19 @@ try {
   brushSizeSliderWrapper.appendChild(brushSizeValue);
   paintSettings.appendChild(brushSizeSliderWrapper);
 
-  // \Paint Options
+  //Resolution change handle
+  resSelect.addEventListener("change", async () => {
+    const next = Number(resSelect.value);
+    if (!Number.isFinite(next) || next < 2) return;
+    N = next;
+    try {
+      await recreate(N);
+    } catch (e) {
+      showError(e);
+    }
+  });
 
+  // canvas DPR-resize
   function resizeCanvasSquare() {
     const cssSide = Math.min(window.innerWidth, window.innerHeight);
     const dpr = Math.max(1, window.devicePixelRatio || 1);
