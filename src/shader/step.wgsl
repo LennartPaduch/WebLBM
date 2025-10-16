@@ -31,7 +31,7 @@ struct StepDynamic {
 
 // Esoteric Pull: implicit BB
 fn load_f_ep_implicit(cell:u32, parity:u32, C:u32, Nx:u32, Ny:u32, j: array<u32, 9>) -> array<f32,9> {
-  var fi : array<f32,9>;
+  var fi : array<f32,9u>;
 
   fi[0] = decode_f16s(f[addr(0u, cell, C)]); 
   for(var i=1u; i<P.Q; i+=2u){
@@ -68,7 +68,7 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (is_solid(m)) { return; }
 
   // --- Load (Esoteric Pull): parity-controlled self/neighbor indices
-  let j  = get_neighbors(cell); // indices of the 8 neighbors (in D2Q9) around 'cell'
+  let j  = get_neighbors(cell); // indices of the 8 neighbors (in D2Q9) around 'cell' and 
   var fi = load_f_ep_implicit(cell, Pd.parity, C, P.Nx, P.Ny, j);
 
   // --- Collision inputs
