@@ -6,7 +6,7 @@ const CELL_EQ     : u32 = 1u << 1;  // equilibrium BC: inlet/outlet
 
 const WGX = 32u;
 const WGY = 32u; 
-const WGZ =  1u;
+const WGZ = 1u;
 
 const EX  : array<i32,9> = array<i32,9>(0, 1,-1, 0, 0, 1,-1, 1,-1); // C, E, W, N, S, NE, SW, SE, NW
 const EY  : array<i32,9> = array<i32,9>(0, 0, 0, 1,-1, 1,-1,-1, 1);
@@ -114,7 +114,7 @@ fn feq_d2q9_shifted(rho_in: f32, u_in: vec2<f32>) -> array<f32, 9> {
   let rhom1 : f32 = rho - 1.0; // rhom1 is arithmetic optimization to minimize digit extinction
 
   // c3 = -3 * (ux^2 + uy^2)
-  let c3 : f32 = -3.0 * (ux*ux + uy*uy);
+  let c3 : f32 = -3.0 * (ux*ux + uy*uy); 
 
   // scale velocities by 3 (1/cs^2 with cs^2=1/3)
   ux = ux * 3.0;
@@ -127,7 +127,7 @@ fn feq_d2q9_shifted(rho_in: f32, u_in: vec2<f32>) -> array<f32, 9> {
   let rhom1e : f32 = WE * rhom1;
 
   // center (shifted)
-  out[0] = W0 * (rho * (0.5 * c3) + rhom1);
+  out[0] = W0 * fma(rho, 0.5 * c3, rhom1);
 
   // precombinations
   let u_plus  : f32 = ux + uy; // dot for NE/SE pairs
