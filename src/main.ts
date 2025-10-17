@@ -255,13 +255,16 @@ function showError(message: unknown) {
   const root = document.createElement("div");
   root.className = "fixed inset-0 z-50 grid place-items-center p-4";
 
+  const wrapper = document.createElement("div");
+  wrapper.className = "flex flex-col";
+
   const card = document.createElement("div");
   card.setAttribute("role", "alert");
   card.className =
-    "w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-xl " +
+    "w-full rounded-2xl border border-zinc-200 bg-white shadow-xl " +
     "dark:border-zinc-800 dark:bg-zinc-900";
 
-  const safe =
+  let safe =
     typeof message === "string"
       ? message
       : message instanceof Error
@@ -278,8 +281,17 @@ function showError(message: unknown) {
     </div>
   `;
 
-  (card.querySelector("p") as HTMLParagraphElement).textContent = String(safe);
+  const p = card.querySelector("p") as HTMLParagraphElement;
+  p.textContent = String(safe);
+  p.appendChild(document.createElement("br"));
+  p.append("WebGPU Browser Support:");
 
-  root.appendChild(card);
+  const supportedBrowsersImg = document.createElement("img");
+  supportedBrowsersImg.src = "https://caniuse.bitsofco.de/image/webgpu.png";
+
+  wrapper.appendChild(card);
+  wrapper.appendChild(supportedBrowsersImg);
+
+  root.appendChild(wrapper);
   document.body.appendChild(root);
 }
