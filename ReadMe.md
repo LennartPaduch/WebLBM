@@ -7,7 +7,7 @@ Fast and memory efficient Lattice Boltzmann CFD (D2Q9) for the browser running o
 ## Overview
 
 This repository implements the Lattice Boltzmann Method (LBM) for the two-dimensional case (D2Q9) running on the GPU using the WebGPU API and its shading language (.wgsl). It leverages WebGPU for high-performance, parallel computations directly in the browser, making CFD simulations accessible without specialized hardware or software.
-The implementation is highly optimized for speed, precision, and memory efficiency, incorporating advanced techniques like shifted discrete distribution functions (DDFs), FP16s storage, and the Esoteric Pull scheme.
+The implementation is highly optimized for speed, precision, and memory efficiency, incorporating advanced techniques like shifted density distribution functions (DDFs), FP16s storage, and the Esoteric Pull scheme.
 
 ## Technical Details
 
