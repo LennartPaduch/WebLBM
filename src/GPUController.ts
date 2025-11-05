@@ -5,33 +5,17 @@ export class GPUController {
   context: GPUCanvasContext;
   contextFormat: GPUTextureFormat;
 
-  private constructor(adapter: GPUAdapter, device: GPUDevice) {
+  private constructor(
+    adapter: GPUAdapter,
+    device: GPUDevice,
+    context: GPUCanvasContext,
+    format: GPUTextureFormat
+  ) {
     this.adapter = adapter;
     this.device = device;
-
-    const canvas = document.querySelector("canvas")!;
-    const context = canvas.getContext("webgpu") as GPUCanvasContext;
-
-    const contextFormat = navigator.gpu.getPreferredCanvasFormat();
-
-    // Configure the canvas
-    context.configure({
-      device,
-      format: contextFormat,
-      alphaMode: "premultiplied",
-    });
-
-    // Configure the canvas
-    context.configure({
-      device,
-      format: contextFormat,
-      alphaMode: "premultiplied",
-    });
-
     this.context = context;
-    this.contextFormat = contextFormat;
+    this.contextFormat = format;
   }
-
   static async create(): Promise<GPUController> {
     if (!navigator.gpu) {
       throw new Error("WebGPU not supported on this browser.");
@@ -43,7 +27,6 @@ export class GPUController {
     }
 
     const canF16 = adapter?.features.has("shader-f16") ?? false;
-
     if (!canF16) {
       throw new Error("Your hardware/browser does not support F16.");
     }
@@ -65,7 +48,25 @@ export class GPUController {
       },
     });
 
-    return new GPUController(adapter, device);
+    device.onuncapturederror = (e) => {
+      throw new Error(`WebGPU uncaptured error: ${e.error.message}`);
+    };
+
+    // canvas
+    const canvas = document.querySelector("canvas");
+    if (!canvas) throw new Error("No <canvas> element found.");
+    const ctx = canvas.getContext("webgpu") as GPUCanvasContext | null;
+    if (!ctx) throw new Error('Failed to get "webgpu" canvas context.');
+
+    const format = navigator.gpu.getPreferredCanvasFormat();
+
+    try {
+      ctx.configure({ device, format, alphaMode: "premultiplied" });
+    } catch (err) {
+      throw new Error("Failed to configure WebGPU canvas context.");
+    }
+
+    return new GPUController(adapter, device, ctx, format);
   }
 
   createBuffer(
