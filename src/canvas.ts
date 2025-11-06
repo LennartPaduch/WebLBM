@@ -14,7 +14,7 @@ export class CanvasPainter {
   #Nx: number;
   #Ny: number;
 
-  #brushRadius = 6; // lattice cells
+  #brushRadius = 3; // lattice cells
   #mode: "solid" | "erase" = "solid";
   #isDrawing = false;
   #lastCell: { x: number; y: number } | null = null;
