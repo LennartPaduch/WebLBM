@@ -201,7 +201,7 @@ try {
   brushSizeSlider.type = "range";
   brushSizeSlider.min = "1";
   brushSizeSlider.max = "100";
-  brushSizeSlider.value = "6";
+  brushSizeSlider.value = "3";
   brushSizeSlider.id = "brush-size";
   brushSizeSlider.className =
     "flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500";
