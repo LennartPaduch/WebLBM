@@ -4,9 +4,9 @@ const CELL_FLUID  : u32 = 0u;
 const CELL_SOLID  : u32 = 1u << 0;
 const CELL_EQ     : u32 = 1u << 1;  // equilibrium BC: inlet/outlet
 
-const WGX = 32u;
-const WGY = 32u; 
-const WGZ = 1u;
+override WGX: u32 = 32u;
+override WGY: u32 = 32u; 
+override WGZ: u32 = 1u;
 
 const EX  : array<i32,9> = array<i32,9>(0, 1,-1, 0, 0, 1,-1, 1,-1); // C, E, W, N, S, NE, SW, SE, NW
 const EY  : array<i32,9> = array<i32,9>(0, 0, 0, 1,-1, 1,-1,-1, 1);
@@ -35,8 +35,14 @@ fn decode_f16s(p: f16) -> f32 {
   return f32(p) * FP16S_INV_SCALE; // unpack + downscale
 }
 
+/* Firefox does not support passing pointers to var<storage> into functions -> now using pack_f16s instead
 fn store_f16s(p: ptr<storage, f16, read_write>, v: f32) {
   *p = f16(v * FP16S_SCALE);       // upscale + pack
+} */
+
+
+fn pack_f16s(v: f32) -> f16 {
+  return f16(v * FP16S_SCALE);     // upscale + pack
 }
 
 fn is_fluid(m:u32) -> bool { return (m == 0);}

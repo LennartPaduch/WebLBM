@@ -27,18 +27,22 @@ fn initialize(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   if(is_eq(m)){
     if(gid.x == P.Nx -1){ // outlet at the right side
-      store_f16s(&global_rho[cell], 1.0);
-      store_f16s(&global_u[  cell], 0.0);
-      store_f16s(&global_u[C+cell], 0.0);
+      global_rho[cell] = pack_f16s(1.0);
+      global_u[  cell] = pack_f16s(0.0);
+      global_u[C+cell] = pack_f16s(0.0);
       let feq = feq_d2q9_shifted(1.0, vec2<f32>(0.0, 0.0));
-      for (var d:u32 = 0u; d < 9u; d++) { store_f16s(&f[addr(d, cell, C)], feq[d]); }
+      for (var d:u32 = 0u; d < 9u; d++) { 
+        f[addr(d, cell, C)] = pack_f16s(feq[d]); 
+      }
       return;
     }
-    store_f16s(&global_rho[cell], 1.0);
-    store_f16s(&global_u[  cell], P.inletUx);
-    store_f16s(&global_u[C+cell], P.inletUy);
+    global_rho[cell] = pack_f16s(1.0);
+    global_u[  cell] = pack_f16s(P.inletUx);
+    global_u[C+cell] = pack_f16s(P.inletUy);
     let feq = feq_d2q9_shifted(1.0, vec2<f32>(P.inletUx, P.inletUy));
-    for (var d:u32 = 0u; d < 9u; d++) { store_f16s(&f[addr(d, cell, C)], feq[d]); }
+    for (var d:u32 = 0u; d < 9u; d++) { 
+      f[addr(d, cell, C)] = pack_f16s(feq[d]); 
+    }
     return;
   }
   /*else if(is_solid(m)) {
@@ -49,9 +53,9 @@ fn initialize(@builtin(global_invocation_id) gid: vec3<u32>) {
     ux = 0.0;
     uy = 0.0;
   } */ else{
-    store_f16s(&global_rho[cell], r);
-    store_f16s(&global_u[cell  ], ux);
-    store_f16s(&global_u[cell+C], uy);
+    global_rho[cell] = pack_f16s(r);
+    global_u[cell  ] = pack_f16s(ux);
+    global_u[cell+C] = pack_f16s(uy);
   }
 
   // Build equilibrium with shifted DDFs (Skordos, 1993) (ρ starts at ~1.0)
@@ -59,7 +63,7 @@ fn initialize(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   // Write equilibrium into f 
   for (var d:u32 = 0u; d < 9u; d++) {
-    store_f16s(&f[addr(d, cell, C)],feq[d]);
+    f[addr(d, cell, C)] = pack_f16s(feq[d]);
   }
 }
 

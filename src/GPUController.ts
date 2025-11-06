@@ -34,7 +34,7 @@ export class GPUController {
     const limits = adapter.limits;
 
     const device = await adapter.requestDevice({
-      requiredFeatures: canF16 ? ["shader-f16"] : [],
+      requiredFeatures: ["shader-f16"],
       requiredLimits: {
         maxStorageBufferBindingSize: limits.maxStorageBufferBindingSize,
         maxBufferSize: limits.maxBufferSize,
@@ -49,7 +49,7 @@ export class GPUController {
     });
 
     device.onuncapturederror = (e) => {
-      throw new Error(`WebGPU uncaptured error: ${e.error.message}`);
+      console.error(`WebGPU uncaptured error: ${e.error?.message ?? e}`);
     };
 
     // canvas

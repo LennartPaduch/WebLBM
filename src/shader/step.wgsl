@@ -89,9 +89,9 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>) {
     uyn  = decode_f16s(global_u[C+cell]);
   } else {
     calculate_rho_u(&fi, &rhon, &uxn, &uyn); // calculate density and velocity fields from fi
-    store_f16s(&global_rho[cell], rhon);
-    store_f16s(&global_u[  cell], uxn);
-    store_f16s(&global_u[C+cell], uyn);
+    global_rho[cell] = pack_f16s(rhon);
+    global_u[  cell] = pack_f16s(uxn);
+    global_u[C+cell] = pack_f16s(uyn);
   }
 
   // Equilibrium (shifted DDFs)
@@ -106,9 +106,9 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>) {
     fi[i] = select(fma(P.omega, feq[i], fma(one_minus_omega, fi[i], Fin[i])), feq[i], is_eq(m)); // perform collision (SRT)
   }
 
-  store_f16s(&f[addr(0u, cell, C)], fi[0]);
+  f[addr(0u, cell, C)] = pack_f16s(fi[0]);
   for (var i=1u; i<9u; i+=2u){
-    store_f16s(&f[addr(select(i+1u, i   ,  Pd.parity == 1u), j[i], C)], fi[i   ]);
-    store_f16s(&f[addr(select(i   , i+1u,  Pd.parity == 1u), cell, C)], fi[i+1u]);
+    f[addr(select(i+1u, i   ,  Pd.parity == 1u), j[i], C)] = pack_f16s(fi[i   ]);
+    f[addr(select(i   , i+1u,  Pd.parity == 1u), cell, C)] = pack_f16s(fi[i+1u]);
   }  
 }
