@@ -33,8 +33,8 @@ fn decode_f16s(p: f16) -> f32 {
   return f32(p) * FP16S_INV_SCALE; // unpack + downscale
 }
 
-fn store_f16s(p: ptr<storage, f16, read_write>, v: f32) {
-  *p = f16(v * FP16S_SCALE); // upscale + pack
+fn pack_f16s(v: f32) -> f16 {
+  return f16(v * FP16S_SCALE);     // upscale + pack
 }
 ```
 
