@@ -9,36 +9,58 @@
 </head>
 
 
-<body class="h-screen w-screen bg-black">
+<body class="h-screen w-screen bg-black text-white overscroll-none">
     <div class="relative h-screen w-screen overflow-hidden" id="wrapper">
-        <canvas id="canvas" class="block mx-auto w-[min(100vw,100vh)] h-[min(100vw,100vh)]"></canvas>
+        <canvas id="canvas" class="block mx-auto w-[min(100vw,100vh)] h-[min(100vw,100vh)] touch-none select-none"></canvas>
 
-        <!-- Overlay settings so they don't affect canvas size -->
-        <div id="settings" class="absolute top-3 left-3 bg-gray-800/80 text-white p-3 rounded-lg space-y-3">
-            <button id="restart-btn" aria-label="Restart Animation"
-                class= "flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600">Restart Sim</button>
-            <button id="reset-btn" aria-label="Reset Canvas"
-                class= "flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600">Reset Canvas</button>
-            <div>
-                <label for="colormap-select">Select Colormap:</label>
-                <select name="colormaps" id="colormap-select"> 
+        <button id="show-settings-btn" aria-label="Show Settings"
+            class="absolute left-3 top-3 z-30 w-auto px-4 py-2 bg-gray-700/95 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600 touch-manipulation">
+            Settings
+        </button>
+
+        <!-- Settings panel: full-screen on small viewports, overlay on desktop -->
+        <div id="settings"
+            class="absolute inset-0 z-20 hidden overflow-y-auto bg-gray-950 p-3 space-y-3 md:inset-x-auto md:bottom-auto md:left-3 md:top-3 md:w-[22rem] md:max-h-[calc(100vh-1.5rem)] md:rounded-lg md:border md:border-gray-700/90 md:bg-gray-900/85 md:shadow-xl md:backdrop-blur-sm">
+            <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold text-gray-200">Settings</div>
+                <button id="hide-settings-btn" aria-label="Hide Settings"
+                    class="w-auto px-3 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600 touch-manipulation">
+                    Hide
+                </button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <button id="restart-btn" aria-label="Restart Animation"
+                    class="w-full px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600">Restart
+                    Sim</button>
+                <button id="togglePause-btn" aria-label="Toggle Pause"
+                    class="w-full px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-all border border-gray-600"></button>
+            </div>
+            <div class="space-y-1">
+                <label for="colormap-select" class="text-xs font-medium text-gray-300">Colormap</label>
+                <select name="colormaps" id="colormap-select"
+                    class="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer hover:bg-gray-600 transition-colors">
                 </select>
             </div>
 
-            <div>
-                <label for="visType-select">Select which property to render:</label>
-                <select name="visTypes" id="visType-select"> 
+            <div class="space-y-1">
+                <label for="visType-select" class="text-xs font-medium text-gray-300">Rendered Field</label>
+                <select name="visTypes" id="visType-select"
+                    class="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer hover:bg-gray-600 transition-colors">
                 </select>
             </div>
 
-            <div>Paint Options</div>
+            <div class="text-sm font-medium text-gray-300">Paint Options</div>
             <div id="paint-settings" class="flex gap-4 flex-col ">
-              
-            </div>            
+
+            </div>
+            <div class="space-y-1">
+                <label for="mask-scene-select" class="text-xs font-medium text-gray-300">Scene</label>
+                <select name="mask-scene-select" id="mask-scene-select"
+                    class="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer hover:bg-gray-600 transition-colors">
+                </select>
+            </div>
         </div>
     </div>
     <script type="module" src="src/main.ts"></script>
 </body>
-</body>
-
 </html>
