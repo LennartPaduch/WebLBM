@@ -9,23 +9,25 @@ struct StepParams {
   uIny:      f32,
   rhoOut:    f32,
 
-  omega:     f32, // LBM relaxation rate w = dt/tau = dt/(nu/c^2+dt/2) = 1/(3*nu+1/2)
+  omega:     f32, // BGK relaxation (lattice units): omega = 1/tau, with nu = c_s^2*(tau - 0.5), c_s^2 = 1/3
   _pad0:     u32,
   _pad1:     u32,
   _pad2:     u32,
 };
 
 // Dynamic params: updated every step
-struct StepDynamic {
-  parity: u32,
-  _pad:   vec3<u32> // pad to 16 bytes to be uniform-safe
-};
+  struct StepDynamic {
+    parity: u32,
+    _pad0:  u32,
+    _pad1:  u32,
+    _pad2:  u32,
+  };
 
 @group(0) @binding(0) var<storage, read_write> f           : array<f16>;   // SoA: f[i*C + cell]
 @group(0) @binding(1) var<uniform>             P           : StepParams;
 @group(0) @binding(2) var<storage, read>       mask        : array<u32>;
-@group(0) @binding(3) var<storage, read_write> global_u    : array<f16>;   // 2*C length: ux, uy
-@group(0) @binding(4) var<storage, read_write> global_rho  : array<f16>;
+@group(0) @binding(3) var<storage, read_write> global_u    : array<f32>;   // 2*C length: ux, uy
+@group(0) @binding(4) var<storage, read_write> global_rho  : array<f32>;
 @group(0) @binding(5) var<uniform>             Pd          : StepDynamic;
 
 
@@ -67,31 +69,31 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>) {
   let m = mask[cell];
   if (is_solid(m)) { return; }
 
-  // --- Load (Esoteric Pull): parity-controlled self/neighbor indices
-  let j  = get_neighbors(cell); // indices of the 8 neighbors (in D2Q9) around 'cell' and 
+  // Load (Esoteric Pull): parity-controlled self/neighbor indices
+  let j  = get_neighbors(gid.x,gid.y); // indices of the 8 neighbors (in D2Q9) around 'cell' 
   var fi = load_f_ep_implicit(cell, Pd.parity, C, P.Nx, P.Ny, j);
 
-  // --- Collision inputs
+  // Collision inputs
   var rhon: f32;
   var uxn : f32;
   var uyn : f32;
 
-  if (gid.x == P.Nx-1u && is_eq(m)) { // outlet
+  if (gid.x == P.Nx-1u && is_eq(m)) { // outlet: copy interior macros (zero-gradient outlet in practice)
     let inner = (P.Nx-2u) + gid.y*P.Nx;
     global_rho[cell] = global_rho[inner];
     global_u[  cell] = global_u[  inner];
     global_u[C+cell] = global_u[C+inner];
-  }
+  } 
 
   if (is_eq(m)) { //equilibrium BC: inlet/outlet
-    rhon = decode_f16s(global_rho[cell]);
-    uxn  = decode_f16s(global_u[  cell]);
-    uyn  = decode_f16s(global_u[C+cell]);
+    rhon = global_rho[cell];
+    uxn  = global_u[  cell];
+    uyn  = global_u[C+cell];
   } else {
     calculate_rho_u(&fi, &rhon, &uxn, &uyn); // calculate density and velocity fields from fi
-    global_rho[cell] = pack_f16s(rhon);
-    global_u[  cell] = pack_f16s(uxn);
-    global_u[C+cell] = pack_f16s(uyn);
+    global_rho[cell] = rhon;
+    global_u[  cell] = uxn;
+    global_u[C+cell] = uyn;
   }
 
   // Equilibrium (shifted DDFs)

@@ -22,7 +22,7 @@ export class CanvasPainter {
 
   #handlers?: Handlers;
   #circleCache = new Map<number, Array<{ dy: number; span: number }>>();
-  #innerMargin = 2; // keep a small moat near borders by default
+  #innerMargin = 0; // allow painting up to boundaries by default
   #useRAFCoalescing: boolean;
   #pending: RowSpan[] = [];
   #pendingVal: number | null = null;
@@ -34,7 +34,7 @@ export class CanvasPainter {
     Ny: number;
     onPaint: PaintCallback; // receives lattice row spans + value
     /**
-     * Optional: number of cells kept as an inner margin (unpaintable). Default 2.
+     * Optional: number of cells kept as an inner margin (unpaintable). Default 0.
      */
     innerMargin?: number;
     /**
@@ -61,9 +61,10 @@ export class CanvasPainter {
     this.#mode = "erase";
   }
 
+
   /**
    * Set the unpaintable safety margin from borders (in lattice cells).
-   * Use 0 to allow painting up to the edge.
+   * Set to 0 to allow painting up to the edge.
    */
   setBoundsMargin(margin: number) {
     this.#innerMargin = Math.max(0, margin | 0);
@@ -83,7 +84,7 @@ export class CanvasPainter {
     this.#handlers = { onDown, onMove, onUpCancel };
   }
 
-  disable() {
+  destroy() {
     if (!this.#handlers) return;
     const { onDown, onMove, onUpCancel } = this.#handlers;
     this.#canvas.removeEventListener("pointerdown", onDown);
@@ -143,7 +144,7 @@ export class CanvasPainter {
   #onPointerUpCancel(e: PointerEvent) {
     try {
       this.#canvas.releasePointerCapture?.(e.pointerId);
-    } catch {}
+    } catch { }
     this.#isDrawing = false;
     this.#lastCell = null;
     this.#flush(true);
@@ -306,7 +307,7 @@ export class CanvasPainter {
     y0: number,
     x1: number,
     y1: number,
-    r: number
+    r: number,
   ): RowSpan[] {
     if (x0 === x1 && y0 === y1) return this.#paintCircle(x0, y0, r);
 
@@ -348,7 +349,7 @@ export class CanvasPainter {
     x0: number,
     y0: number,
     x1: number,
-    y1: number
+    y1: number,
   ) {
     const vx = x1 - x0,
       vy = y1 - y0;
