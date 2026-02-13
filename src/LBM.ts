@@ -13,7 +13,7 @@ export const CELL = {
 } as const;
 
 export const VisTypes = {
-  VELOCITY: 0, // |u|
+  VELOCITY: 0,
   VORTICITY: 1,
 } as const;
 export type VisType = (typeof VisTypes)[keyof typeof VisTypes];
@@ -35,14 +35,12 @@ interface VisSettings {
 const UNIFORM_SIZE = 256;
 
 export class LBM {
-  // grid
   #Nx: number;
   #Ny: number;
   #Q = 9;
   #cellCount: number;
   #fluidCellCount: number;
 
-  // physics
   #tau = 0.6;
   #omega = 1.0 / this.#tau;
   #inletUx = 0.02;
@@ -54,59 +52,50 @@ export class LBM {
     type: VisTypes.VELOCITY,
     colorMap: VisColormaps.TURBO,
   };
-
+  
   #gpu: GPUController;
 
-  // buffers
   #f!: GPUBuffer;
-  #maskBuffer!: GPUBuffer; // u32 per cell
+  #maskBuffer!: GPUBuffer;
   #maskCPU!: Uint32Array;
-  #u!: GPUBuffer;
-  #rho!: GPUBuffer;
 
   #initUniform!: GPUBuffer;
   #stepUniform!: GPUBuffer;
 
-  // parity uniforms (StepDynamic in WGSL; only parity used, padding unused)
   #parityBuf0!: GPUBuffer;
   #parityBuf1!: GPUBuffer;
 
-  // pipelines
   #pipeInit!: GPUComputePipeline;
   #pipeStep!: GPUComputePipeline;
 
-  // bind groups
   #bgInit!: GPUBindGroup;
   #bgStep0!: GPUBindGroup;
   #bgStep1!: GPUBindGroup;
 
-  // rendering
   #visTex!: GPUTexture;
   #visView!: GPUTextureView;
   #visSampler!: GPUSampler;
 
-  #visUniform!: GPUBuffer; // VisParams
+  #visUniform!: GPUBuffer;
   #pipeVis!: GPUComputePipeline;
   #pipeBlit!: GPURenderPipeline;
 
-  #bgVis!: GPUBindGroup;
+  #bgVis0!: GPUBindGroup;
+  #bgVis1!: GPUBindGroup;
 
   #bgBlit!: GPUBindGroup;
 
-  // Simulation State
   tick = 0;
   #isRunning = false;
   #rafId: number = NaN;
 
-  // Performance / Auto-tuning
   #stepsPerFrame = 1;
   #lastFrameTime = 0;
+  #maxStepsPerFrame = 2048;
 
-  // cached dispatch sizes
   #workgroupsX = 0;
   #workgroupsY = 0;
 
-  // OPT: avoid per-call allocations for uniforms
   #visAB = new ArrayBuffer(UNIFORM_SIZE);
   #visDV = new DataView(this.#visAB);
   #visDirty = true;
@@ -118,6 +107,13 @@ export class LBM {
   #stepDV = new DataView(this.#stepAB);
 
   constructor(nx: number, ny: number, gpu: GPUController) {
+    if (nx < 2 || ny < 2) {
+      throw new Error(`Invalid lattice size ${nx}x${ny}. Dimensions must be >= 2.`);
+    }
+    // Neighbor wrap in shaders uses bitmasking, so dimensions must be powers of two.
+    if ((nx & (nx - 1)) !== 0 || (ny & (ny - 1)) !== 0) {
+      throw new Error(`LBM requires power-of-two dimensions, got ${nx}x${ny}.`);
+    }
     this.#Nx = nx;
     this.#Ny = ny;
     this.#cellCount = nx * ny;
@@ -141,7 +137,7 @@ export class LBM {
       [8, 16],
     ];
 
-    let WGX = 8, WGY = 8; // safe fallback
+    let WGX = 8, WGY = 8;
     for (const [x, y] of candidates) {
       if (x <= lim.maxComputeWorkgroupSizeX &&
         y <= lim.maxComputeWorkgroupSizeY &&
@@ -156,9 +152,8 @@ export class LBM {
 
     const constants = { WGX, WGY, WGZ: 1 };
 
-    // ---------- buffers ----------
     const elems = this.#Q * this.#cellCount;
-    const bytesF = elems * 2; // f16
+    const bytesF = elems * 2;
     const sizeF4 = (bytesF + 3) & ~3;
 
     this.#f = device.createBuffer({
@@ -185,21 +180,6 @@ export class LBM {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // u is 2*C f32 = 8*C bytes
-    this.#u = device.createBuffer({
-      label: "global u array",
-      size: this.#cellCount * 8,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-    });
-
-    // rho is C f32 = 4*C bytes
-    this.#rho = device.createBuffer({
-      label: "global rho array",
-      size: this.#cellCount * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-    });
-
-    // --- parity uniforms (StepDynamic) ---
     this.#parityBuf0 = device.createBuffer({
       label: "parity 0 (StepDynamic)",
       size: UNIFORM_SIZE,
@@ -214,11 +194,9 @@ export class LBM {
     device.queue.writeBuffer(this.#parityBuf0, 0, new Uint32Array([0]));
     device.queue.writeBuffer(this.#parityBuf1, 0, new Uint32Array([1]));
 
-    // write init + step uniforms once
-    this.#writeInitUniform({ rho0: 1, inletUx: this.#inletUx, inletUy: this.#inletUy });
+    this.#writeInitUniform({ inletUx: this.#inletUx, inletUy: this.#inletUy });
     this.#writeStepUniform();
 
-    // ---------- pipelines ----------
     const modInit = device.createShaderModule({
       label: "init.wgsl",
       code: commonWgsl + "\n" + initWGSL,
@@ -240,7 +218,6 @@ export class LBM {
       compute: { module: modStep, entryPoint: "step", constants },
     });
 
-    // ---------- bind groups ----------
     this.#bgInit = device.createBindGroup({
       label: "init BG",
       layout: this.#pipeInit.getBindGroupLayout(0),
@@ -248,8 +225,6 @@ export class LBM {
         { binding: 0, resource: { buffer: this.#f } },
         { binding: 1, resource: { buffer: this.#maskBuffer } },
         { binding: 2, resource: { buffer: this.#initUniform } },
-        { binding: 3, resource: { buffer: this.#u } },
-        { binding: 4, resource: { buffer: this.#rho } },
       ],
     });
 
@@ -258,23 +233,20 @@ export class LBM {
       { binding: 0, resource: { buffer: this.#f } },
       { binding: 1, resource: { buffer: this.#stepUniform } },
       { binding: 2, resource: { buffer: this.#maskBuffer } },
-      { binding: 3, resource: { buffer: this.#u } },
-      { binding: 4, resource: { buffer: this.#rho } },
     ] as const;
 
     this.#bgStep0 = device.createBindGroup({
       label: "step BG parity 0",
       layout: stepLayout,
-      entries: [...stepEntriesBase, { binding: 5, resource: { buffer: this.#parityBuf0 } }],
+      entries: [...stepEntriesBase, { binding: 3, resource: { buffer: this.#parityBuf0 } }],
     });
 
     this.#bgStep1 = device.createBindGroup({
       label: "step BG parity 1",
       layout: stepLayout,
-      entries: [...stepEntriesBase, { binding: 5, resource: { buffer: this.#parityBuf1 } }],
+      entries: [...stepEntriesBase, { binding: 3, resource: { buffer: this.#parityBuf1 } }],
     });
 
-    // ---------- visualization ----------
     this.#visTex = device.createTexture({
       label: "visTex",
       size: { width: this.#Nx, height: this.#Ny },
@@ -290,7 +262,6 @@ export class LBM {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // compile viz shaders
     const visModule = device.createShaderModule({
       label: "render_compute.wgsl",
       code: commonWgsl + "\n" + renderComputeWGSL,
@@ -317,24 +288,35 @@ export class LBM {
       },
     });
 
-    // write initial vis params once
     this.#writeVisUniformIfDirty();
 
 
     const visLayout = this.#pipeVis.getBindGroupLayout(0);
 
-    this.#bgVis = device.createBindGroup({
-      label: "vis BG (macros)",
+    this.#bgVis0 = device.createBindGroup({
+      label: "vis BG parity 0",
       layout: visLayout,
       entries: [
-        { binding: 0, resource: { buffer: this.#u } },          // global_u
-        { binding: 1, resource: { buffer: this.#maskBuffer } }, // mask
-        { binding: 2, resource: { buffer: this.#visUniform } }, // VisParams
-        { binding: 3, resource: this.#visView },                // outputTex
+        { binding: 0, resource: { buffer: this.#f } },
+        { binding: 1, resource: { buffer: this.#maskBuffer } },
+        { binding: 2, resource: { buffer: this.#visUniform } },
+        { binding: 3, resource: { buffer: this.#parityBuf0 } },
+        { binding: 4, resource: this.#visView },
       ],
     });
 
-    // blit bind group
+    this.#bgVis1 = device.createBindGroup({
+      label: "vis BG parity 1",
+      layout: visLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.#f } },
+        { binding: 1, resource: { buffer: this.#maskBuffer } },
+        { binding: 2, resource: { buffer: this.#visUniform } },
+        { binding: 3, resource: { buffer: this.#parityBuf1 } },
+        { binding: 4, resource: this.#visView },
+      ],
+    });
+
     this.#bgBlit = device.createBindGroup({
       label: "blit BG",
       layout: this.#pipeBlit.getBindGroupLayout(0),
@@ -369,27 +351,21 @@ export class LBM {
   };
 
   setVisType = (newType: VisType): void => {
-    // 1) Reference flow speed for visualization scaling.
-    // Use inlet speed magnitude with a floor so the initial at-rest state still has a usable range.
+    // Keep initial visualization readable for low-speed presets.
     const uMag = Math.sqrt(this.#inletUx ** 2 + this.#inletUy ** 2);
     const uRef = Math.max(uMag, 0.02);
 
-    // 2) Choose display bounds.
-    // These are heuristic visualization ranges, not strict physical limits.
     let min = 0.0;
     let max = 1.0;
 
     switch (newType) {
       case VisTypes.VELOCITY: {
-        // For fully developed channel flow, centerline speed is ~1.5x mean inlet speed.
-        // Obstacles can locally increase speed, so we leave extra headroom.
         min = 0.0;
         max = uRef * 2;
         break;
       }
       case VisTypes.VORTICITY: {
-        // In lattice units, |omega_z| scales like U/L.
-        // This factor is tuned for readable wakes across presets, not a universal physical bound.
+        // Heuristic scale for signed vorticity in lattice units.
         const vortLimit = uRef * 0.01;
         min = -vortLimit;
         max = vortLimit;
@@ -401,7 +377,6 @@ export class LBM {
       }
     }
 
-    // 3) Apply
     this.#visSettings.minValue = min;
     this.#visSettings.maxValue = max;
     this.#visSettings.type = newType;
@@ -432,14 +407,13 @@ export class LBM {
 
     this.#inletUx = result.sim.inletUx;
     this.#inletUy = result.sim.inletUy ?? 0;
+    this.#visDirty = true;
     this.setTau(result.sim.tau);
 
-    this.#writeInitUniform(
-      {
-        rho0: 1,
-        inletUx: this.#inletUx,
-        inletUy: this.#inletUy
-      });
+    this.#writeInitUniform({
+      inletUx: this.#inletUx,
+      inletUy: this.#inletUy,
+    });
     this.#writeStepUniform();
   }
 
@@ -450,10 +424,17 @@ export class LBM {
     this.#lastFrameTime = timestamp;
 
     if (dt > 0) {
-      if (dt < 12) {
-        this.#stepsPerFrame = Math.min(this.#stepsPerFrame + 1, 100);
-      } else if (dt > 17 && this.#stepsPerFrame > 1) {
+      if (dt > 22) {
+        this.#stepsPerFrame = Math.max(1, Math.floor(this.#stepsPerFrame * 0.75));
+      } else if (dt > 18.5) {
         this.#stepsPerFrame = Math.max(1, Math.floor(this.#stepsPerFrame * 0.9));
+      } else if (dt < 15.5) {
+        this.#stepsPerFrame = Math.min(
+          this.#stepsPerFrame + Math.max(1, Math.floor(this.#stepsPerFrame * 0.1)),
+          this.#maxStepsPerFrame,
+        );
+      } else {
+        this.#stepsPerFrame = Math.min(this.#stepsPerFrame + 1, this.#maxStepsPerFrame);
       }
     }
 
@@ -461,41 +442,43 @@ export class LBM {
     this.#rafId = requestAnimationFrame(this.#renderFrame);
   };
 
-  #executeBatch = (steps: number): void => {
+  #executeBatch = (steps: number, doRender = true): void => {
+    if (steps <= 0 && !doRender) return;
+
     const device = this.#gpu.device;
     const enc = device.createCommandEncoder({ label: "LBM Batch" });
 
-    // Compute pass: STEP (N times) + VIS (once)
-    {
+    if (steps > 0 || doRender) {
       const cPass = enc.beginComputePass({ label: "Sim+Vis" });
 
-      // --- step ---
-      cPass.setPipeline(this.#pipeStep);
-      for (let i = 0; i < steps; i++) {
-        const bg = (this.tick & 1) === 0 ? this.#bgStep0 : this.#bgStep1;
-        cPass.setBindGroup(0, bg);
-        cPass.dispatchWorkgroups(this.#workgroupsX, this.#workgroupsY);
-        this.tick++;
+      if (steps > 0) {
+        cPass.setPipeline(this.#pipeStep);
+        for (let i = 0; i < steps; i++) {
+          cPass.setBindGroup(0, (this.tick & 1) === 0 ? this.#bgStep0 : this.#bgStep1);
+          cPass.dispatchWorkgroups(this.#workgroupsX, this.#workgroupsY);
+          this.tick++;
+        }
       }
 
-      // --- vis ---
-      this.#writeVisUniformIfDirty();
-      cPass.setPipeline(this.#pipeVis);
-      cPass.setBindGroup(0, this.#bgVis);
-      cPass.dispatchWorkgroups(this.#workgroupsX, this.#workgroupsY);
+      if (doRender) {
+        this.#writeVisUniformIfDirty();
+        cPass.setPipeline(this.#pipeVis);
+        cPass.setBindGroup(0, (this.tick & 1) === 0 ? this.#bgVis0 : this.#bgVis1);
+        cPass.dispatchWorkgroups(this.#workgroupsX, this.#workgroupsY);
+      }
 
       cPass.end();
     }
 
-    // Blit pass
-    {
+    if (doRender) {
       const view = this.#gpu.context.getCurrentTexture().createView();
       const rPass = enc.beginRenderPass({
         label: "blit",
         colorAttachments: [
           {
             view,
-            loadOp: "load", // fullscreen triangle overwrites everything
+            // Full-screen triangle overwrites the target.
+            loadOp: "load",
             storeOp: "store",
           },
         ],
@@ -515,7 +498,8 @@ export class LBM {
     this.#isRunning = true;
 
     if (numSteps !== undefined) {
-      this.#executeBatch(numSteps);
+      // Solver-only mode for benchmarking.
+      this.#executeBatch(numSteps, false);
       this.#isRunning = false;
       return;
     }
@@ -553,7 +537,6 @@ export class LBM {
     return count;
   };
 
-  // ---------- uniform writers (no allocations) ----------
   #writeVisUniformIfDirty = (): void => {
     if (!this.#visDirty) return;
     this.#visDirty = false;
@@ -568,12 +551,13 @@ export class LBM {
     dv.setUint32(o, this.#visSettings.colorMap | 0, true); o += 4;
     dv.setFloat32(o, this.#visSettings.minValue, true); o += 4;
     dv.setFloat32(o, this.#visSettings.maxValue, true); o += 4;
+    dv.setFloat32(o, this.#inletUx, true); o += 4;
+    dv.setFloat32(o, this.#inletUy, true);
 
     this.#gpu.device.queue.writeBuffer(this.#visUniform, 0, this.#visAB);
   };
 
-  #writeInitUniform = (opts: { rho0: number; inletUx: number; inletUy: number }): void => {
-    // rho0 is retained for API compatibility; the init uniform currently uses inlet velocity only.
+  #writeInitUniform = (opts: { inletUx: number; inletUy: number }): void => {
     const dv = this.#initDV;
     let o = 0;
 
@@ -595,11 +579,9 @@ export class LBM {
     dv.setUint32(o, this.#cellCount, true); o += 4;
     dv.setUint32(o, this.#Q, true); o += 4;
 
-    dv.setFloat32(o, 1.0 /* rhoIn */, true); o += 4;
-    dv.setFloat32(o, this.#inletUx /* uInx */, true); o += 4;
-    dv.setFloat32(o, this.#inletUy /* uIny */, true); o += 4;
-    dv.setFloat32(o, 1.0 /* rhoOut */, true); o += 4;
-
+    dv.setFloat32(o, 1.0, true); o += 4;
+    dv.setFloat32(o, this.#inletUx, true); o += 4;
+    dv.setFloat32(o, this.#inletUy, true); o += 4;
     dv.setFloat32(o, this.#omega, true);
 
     this.#gpu.device.queue.writeBuffer(this.#stepUniform, 0, this.#stepAB);
@@ -676,8 +658,6 @@ export class LBM {
 
     this.#f?.destroy();
     this.#maskBuffer?.destroy();
-    this.#u?.destroy();
-    this.#rho?.destroy();
 
     this.#visTex?.destroy();
     this.#visUniform?.destroy();

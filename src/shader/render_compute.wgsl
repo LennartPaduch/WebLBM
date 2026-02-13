@@ -6,12 +6,22 @@
     cmap:      u32, // 0=Viridis, 1=Turbo, 2=RdBu
     vmin:      f32,
     vmax:      f32,
+    inletUx:   f32,
+    inletUy:   f32,
   };
 
-  @group(0) @binding(0) var<storage, read>  global_u   : array<f32>;   // [0..C)=ux, [C..2C)=uy
+  struct StepDynamic {
+    parity: u32,
+    _pad0:  u32,
+    _pad1:  u32,
+    _pad2:  u32,
+  };
+
+  @group(0) @binding(0) var<storage, read>  f          : array<f16>;   // SoA: f[i*C + cell]
   @group(0) @binding(1) var<storage, read>  mask       : array<u32>;
   @group(0) @binding(2) var<uniform>        P          : VisParams;
-  @group(0) @binding(3) var outputTex : texture_storage_2d<rgba8unorm, write>;
+  @group(0) @binding(3) var<uniform>        Pd         : StepDynamic;
+  @group(0) @binding(4) var outputTex : texture_storage_2d<rgba8unorm, write>;
 
   // ---- Colormaps ----
   const VIRIDIS_LUT : array<vec3<f32>, 10> = array<vec3<f32>,10>(
@@ -60,30 +70,98 @@
     return mix(RDBU_LUT[i], RDBU_LUT[j], u);
   }
 
-  fn sample_lut10(t: f32, lut: ptr<function, array<vec3<f32>,10>>) -> vec3<f32> {
+  fn colormapViridis(t: f32) -> vec3<f32> {
     let x = clamp(t, 0.0, 1.0) * 9.0;
     let i = u32(floor(x));
     let j = min(i + 1u, 9u);
     let u = smoothstep(0.0, 1.0, fract(x));
-    return mix((*lut)[i], (*lut)[j], u);
-  }
-
-  fn colormapViridis(t: f32) -> vec3<f32> {
-    var lut = VIRIDIS_LUT;
-    return sample_lut10(t, &lut);
+    return mix(VIRIDIS_LUT[i], VIRIDIS_LUT[j], u);
   }
   fn colormapTurbo(t: f32) -> vec3<f32> {
-    var lut = TURBO_LUT;
-    return sample_lut10(t, &lut);
+    let x = clamp(t, 0.0, 1.0) * 9.0;
+    let i = u32(floor(x));
+    let j = min(i + 1u, 9u);
+    let u = smoothstep(0.0, 1.0, fract(x));
+    return mix(TURBO_LUT[i], TURBO_LUT[j], u);
   }
 
-  // ---- Macro access from global fields ----
-  fn read_u(cell: u32) -> vec2<f32> {
-    if (is_solid(mask[cell])) { return vec2<f32>(0.0); }
-    let C = P.cellCount;
-    let ux = global_u[cell];
-    let uy = global_u[cell+C];
+  fn load_f_ep_implicit(cell:u32, parity:u32, C:u32, j: array<u32, 9>) -> array<f32,9> {
+    var fi : array<f32,9u>;
+
+    fi[0] = decode_f16s(f[addr(0u, cell, C)]);
+    if (parity == 0u) {
+      for (var i=1u; i<9u; i+=2u) {
+        fi[i   ] = decode_f16s(f[addr(i, cell, C)]);
+        fi[i+1u] = decode_f16s(f[addr(i+1u, j[i], C)]);
+      }
+    } else {
+      for (var i=1u; i<9u; i+=2u) {
+        fi[i   ] = decode_f16s(f[addr(i+1u, cell, C)]);
+        fi[i+1u] = decode_f16s(f[addr(i, j[i], C)]);
+      }
+    }
+
+    return fi;
+  }
+
+  fn macros_from_shifted_d2q9(fi: ptr<function, array<f32, 9>>, rho_out: ptr<function, f32>, ux_out: ptr<function, f32>, uy_out: ptr<function, f32>) {
+    let f0 = (*fi)[0];
+    let f1 = (*fi)[1];
+    let f2 = (*fi)[2];
+    let f3 = (*fi)[3];
+    let f4 = (*fi)[4];
+    let f5 = (*fi)[5];
+    let f6 = (*fi)[6];
+    let f7 = (*fi)[7];
+    let f8 = (*fi)[8];
+
+    var rho = f0;
+    rho += f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8;
+    rho += 1.0;
+
+    let axis_x = f1 - f2;
+    let axis_y = f3 - f4;
+    let diag_a = f5 - f6;
+    let diag_b = f7 - f8;
+
+    let mx = axis_x + diag_a + diag_b;
+    let my = axis_y + diag_a - diag_b;
+    let inv_rho = 1.0 / rho;
+
+    *rho_out = rho;
+    *ux_out = mx * inv_rho;
+    *uy_out = my * inv_rho;
+  }
+
+  fn velocity_from_f(cell: u32, x: u32, y: u32, parity: u32) -> vec2<f32> {
+    let j = get_neighbors(x, y);
+    var fi = load_f_ep_implicit(cell, parity, P.cellCount, j);
+
+    var rho: f32;
+    var ux: f32;
+    var uy: f32;
+    macros_from_shifted_d2q9(&fi, &rho, &ux, &uy);
     return vec2<f32>(ux, uy);
+  }
+
+  fn sample_velocity(cell: u32, x: u32, y: u32, parity: u32) -> vec2<f32> {
+    let m = mask[cell];
+    if (is_solid(m)) { return vec2<f32>(0.0); }
+
+    if (is_eq(m)) {
+      if (x == 0u) {
+        return vec2<f32>(P.inletUx, P.inletUy);
+      }
+      if (x == P.Nx - 1u) {
+        var innerX: u32 = 0u;
+        if (P.Nx > 1u) { innerX = P.Nx - 2u; }
+        let innerCell = innerX + y * P.Nx;
+        return velocity_from_f(innerCell, innerX, y, parity);
+      }
+      return velocity_from_f(cell, x, y, parity);
+    }
+
+    return velocity_from_f(cell, x, y, parity);
   }
 
   @compute @workgroup_size(WGX, WGY, WGZ)
@@ -103,21 +181,34 @@
       return;
     }
 
-    let u   = read_u(cell);
-    let ux  = u.x;
-    let uy  = u.y;
+    let parity = Pd.parity;
 
     var s: f32;
 
     // mode: 0=|u|, 1=vorticity
     if (P.mode == 1u) {
-      let j = get_neighbors(gid.x, gid.y);
-      let vE = read_u(j[1]);
-      let vW = read_u(j[2]);
-      let vN = read_u(j[3]);
-      let vS = read_u(j[4]);
+      let maskX = P.Nx - 1u;
+      let maskY = P.Ny - 1u;
+
+      let xE = (gid.x + 1u) & maskX;
+      let xW = (gid.x - 1u) & maskX;
+      let yN = (gid.y + 1u) & maskY;
+      let yS = (gid.y - 1u) & maskY;
+
+      let cE = xE + gid.y * P.Nx;
+      let cW = xW + gid.y * P.Nx;
+      let cN = gid.x + yN * P.Nx;
+      let cS = gid.x + yS * P.Nx;
+
+      let vE = sample_velocity(cE, xE, gid.y, parity);
+      let vW = sample_velocity(cW, xW, gid.y, parity);
+      let vN = sample_velocity(cN, gid.x, yN, parity);
+      let vS = sample_velocity(cS, gid.x, yS, parity);
       s = (vE.y - vW.y) * 0.5 - (vN.x - vS.x) * 0.5;
     } else {
+      let u = velocity_from_f(cell, gid.x, gid.y, parity);
+      let ux = u.x;
+      let uy = u.y;
       s = sqrt(ux*ux + uy*uy);
     }
 
@@ -127,8 +218,10 @@
     var rgb: vec3<f32>;
     if (P.cmap == 2u) {
       rgb = colormapRdBu(t);
+    } else if (P.cmap == 1u) {
+      rgb = colormapTurbo(t);
     } else {
-      rgb = select(colormapViridis(t), colormapTurbo(t), P.cmap == 1u);
+      rgb = colormapViridis(t);
     }
 
     textureStore(outputTex, vec2<i32>(gid.xy), vec4<f32>(rgb, 1.0));

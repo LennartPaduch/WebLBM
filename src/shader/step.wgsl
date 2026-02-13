@@ -7,15 +7,11 @@ struct StepParams {
   rhoIn:     f32,
   uInx:      f32,
   uIny:      f32,
-  rhoOut:    f32,
-
-  omega:     f32, // BGK relaxation (lattice units): omega = 1/tau, with nu = c_s^2*(tau - 0.5), c_s^2 = 1/3
-  _pad0:     u32,
-  _pad1:     u32,
-  _pad2:     u32,
+  // omega = 1/tau
+  omega:     f32,
 };
 
-// Dynamic params: updated every step
+  // Toggled each step for Esoteric Pull access pattern.
   struct StepDynamic {
     parity: u32,
     _pad0:  u32,
@@ -23,40 +19,59 @@ struct StepParams {
     _pad2:  u32,
   };
 
-@group(0) @binding(0) var<storage, read_write> f           : array<f16>;   // SoA: f[i*C + cell]
+@group(0) @binding(0) var<storage, read_write> f           : array<f16>; // SoA populations
 @group(0) @binding(1) var<uniform>             P           : StepParams;
 @group(0) @binding(2) var<storage, read>       mask        : array<u32>;
-@group(0) @binding(3) var<storage, read_write> global_u    : array<f32>;   // 2*C length: ux, uy
-@group(0) @binding(4) var<storage, read_write> global_rho  : array<f32>;
-@group(0) @binding(5) var<uniform>             Pd          : StepDynamic;
+@group(0) @binding(3) var<uniform>             Pd          : StepDynamic;
 
 
-// Esoteric Pull: implicit BB
-fn load_f_ep_implicit(cell:u32, parity:u32, C:u32, Nx:u32, Ny:u32, j: array<u32, 9>) -> array<f32,9> {
+fn load_f_ep_implicit(cell:u32, parity:u32, C:u32, j: array<u32, 9>) -> array<f32,9> {
+  // In-place Esoteric Pull readback.
   var fi : array<f32,9u>;
 
   fi[0] = decode_f16s(f[addr(0u, cell, C)]); 
-  for(var i=1u; i<P.Q; i+=2u){
-    fi[i   ] = decode_f16s(f[addr(select(i   , i+1u, parity == 1u), cell, C)]);
-		fi[i+1u] = decode_f16s(f[addr(select(i+1u, i   , parity == 1u), j[i], C)]);
+  if (parity == 0u) {
+    for (var i=1u; i<9u; i+=2u) {
+      fi[i   ] = decode_f16s(f[addr(i, cell, C)]);
+      fi[i+1u] = decode_f16s(f[addr(i+1u, j[i], C)]);
+    }
+  } else {
+    for (var i=1u; i<9u; i+=2u) {
+      fi[i   ] = decode_f16s(f[addr(i+1u, cell, C)]);
+      fi[i+1u] = decode_f16s(f[addr(i, j[i], C)]);
+    }
   }
 
   return fi;
 }
 
-fn calculate_rho_u(fi: ptr<function, array<f32, 9>>, rhon: ptr<function, f32>, uxn: ptr<function, f32>, uyn: ptr<function, f32>) {
-    var rho: f32 = (*fi)[0];
-    for (var d: u32 = 1u; d < 9u; d++) {  // calculate density from f. 9 for D2Q9, that's just the length of the velocity_set
-        rho += (*fi)[d];
-    }
-    rho += 1.0;  // add 1.0 last to avoid digit extinction effects when summing up f (perturbation method / DDF-shifting)
+fn macros_from_shifted_d2q9(fi: ptr<function, array<f32, 9>>, rho_out: ptr<function, f32>, ux_out: ptr<function, f32>, uy_out: ptr<function, f32>) {
+  let f0 = (*fi)[0];
+  let f1 = (*fi)[1];
+  let f2 = (*fi)[2];
+  let f3 = (*fi)[3];
+  let f4 = (*fi)[4];
+  let f5 = (*fi)[5];
+  let f6 = (*fi)[6];
+  let f7 = (*fi)[7];
+  let f8 = (*fi)[8];
 
-    var ux: f32 = (*fi)[1] - (*fi)[2] + (*fi)[5] - (*fi)[6] + (*fi)[7] - (*fi)[8]; // calculate velocity from fi (alternating + and - for best accuracy)
-    var uy: f32 = (*fi)[3] - (*fi)[4] + (*fi)[5] - (*fi)[6] + (*fi)[8] - (*fi)[7];
+  var rho = f0;
+  rho += f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8;
+  rho += 1.0;
 
-    *rhon = rho;
-    *uxn  = ux / rho;
-    *uyn  = uy / rho;
+  let axis_x = f1 - f2;
+  let axis_y = f3 - f4;
+  let diag_a = f5 - f6;
+  let diag_b = f7 - f8;
+
+  let mx = axis_x + diag_a + diag_b;
+  let my = axis_y + diag_a - diag_b;
+  let inv_rho = 1.0 / rho;
+
+  *rho_out = rho;
+  *ux_out = mx * inv_rho;
+  *uy_out = my * inv_rho;
 }
 
 @compute @workgroup_size(WGX, WGY, WGZ)
@@ -69,48 +84,56 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>) {
   let m = mask[cell];
   if (is_solid(m)) { return; }
 
-  // Load (Esoteric Pull): parity-controlled self/neighbor indices
-  let j  = get_neighbors(gid.x,gid.y); // indices of the 8 neighbors (in D2Q9) around 'cell' 
-  var fi = load_f_ep_implicit(cell, Pd.parity, C, P.Nx, P.Ny, j);
+  let j  = get_neighbors(gid.x,gid.y);
+  var fi = load_f_ep_implicit(cell, Pd.parity, C, j);
 
-  // Collision inputs
   var rhon: f32;
   var uxn : f32;
   var uyn : f32;
 
-  if (gid.x == P.Nx-1u && is_eq(m)) { // outlet: copy interior macros (zero-gradient outlet in practice)
-    let inner = (P.Nx-2u) + gid.y*P.Nx;
-    global_rho[cell] = global_rho[inner];
-    global_u[  cell] = global_u[  inner];
-    global_u[C+cell] = global_u[C+inner];
-  } 
-
-  if (is_eq(m)) { //equilibrium BC: inlet/outlet
-    rhon = global_rho[cell];
-    uxn  = global_u[  cell];
-    uyn  = global_u[C+cell];
+  if (is_eq(m)) {
+    if (gid.x == 0u) {
+      // Left inlet.
+      rhon = P.rhoIn;
+      uxn  = P.uInx;
+      uyn  = P.uIny;
+    } else if (gid.x == P.Nx-1u) {
+      // Right outlet from inner-cell macros.
+      let innerX = P.Nx - 2u;
+      let innerCell = innerX + gid.y * P.Nx;
+      let innerJ = get_neighbors(innerX, gid.y);
+      var innerFi = load_f_ep_implicit(innerCell, Pd.parity, C, innerJ);
+      macros_from_shifted_d2q9(&innerFi, &rhon, &uxn, &uyn);
+    } else {
+      macros_from_shifted_d2q9(&fi, &rhon, &uxn, &uyn);
+    }
   } else {
-    calculate_rho_u(&fi, &rhon, &uxn, &uyn); // calculate density and velocity fields from fi
-    global_rho[cell] = rhon;
-    global_u[  cell] = uxn;
-    global_u[C+cell] = uyn;
+    macros_from_shifted_d2q9(&fi, &rhon, &uxn, &uyn);
   }
 
-  // Equilibrium (shifted DDFs)
   let feq = feq_d2q9_shifted(rhon, vec2<f32>(uxn, uyn));
 
-  var Fin: array<f32, 9>;
-  for (var i=0u; i<9u; i+=1u) { Fin[i] = 0.0; }
-
-  // SRT (Single-Relaxation-Time (BGK))
   let one_minus_omega = 1.0 - P.omega;
-  for (var i=0u; i<9u; i++){
-    fi[i] = select(fma(P.omega, feq[i], fma(one_minus_omega, fi[i], Fin[i])), feq[i], is_eq(m)); // perform collision (SRT)
+  if (is_eq(m)) {
+    for (var i=0u; i<9u; i++) {
+      fi[i] = feq[i];
+    }
+  } else {
+    for (var i=0u; i<9u; i++){
+      fi[i] = fma(P.omega, feq[i], one_minus_omega * fi[i]);
+    }
   }
 
   f[addr(0u, cell, C)] = pack_f16s(fi[0]);
-  for (var i=1u; i<9u; i+=2u){
-    f[addr(select(i+1u, i   ,  Pd.parity == 1u), j[i], C)] = pack_f16s(fi[i   ]);
-    f[addr(select(i   , i+1u,  Pd.parity == 1u), cell, C)] = pack_f16s(fi[i+1u]);
-  }  
+  if (Pd.parity == 0u) {
+    for (var i=1u; i<9u; i+=2u) {
+      f[addr(i+1u, j[i], C)] = pack_f16s(fi[i   ]);
+      f[addr(i,    cell, C)] = pack_f16s(fi[i+1u]);
+    }
+  } else {
+    for (var i=1u; i<9u; i+=2u) {
+      f[addr(i,    j[i], C)] = pack_f16s(fi[i   ]);
+      f[addr(i+1u, cell, C)] = pack_f16s(fi[i+1u]);
+    }
+  }
 }
