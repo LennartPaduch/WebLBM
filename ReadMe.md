@@ -143,8 +143,8 @@ Mask flags:
 
 ## Acknowledgments
 
-Moritz Lehmann's work on FluidX3D inspired me to do this project. Some of the ideas and optimizations here were inspired by his work.
-Also check out his amazing FluidX3D project: <https://github.com/ProjectPhysX/FluidX3D>
+This project was inspired by Moritz Lehmann's FluidX3D work and related LBM optimization papers.
+FluidX3D: <https://github.com/ProjectPhysX/FluidX3D>
 
 ## Browser Support
 
