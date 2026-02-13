@@ -6,13 +6,12 @@ import { UIController } from "./UIController";
 try {
   const gpu = await GPUController.create();
 
-  // Find the canvas once
   const canvas = document.getElementById("canvas") as HTMLCanvasElement;
   if (!canvas) throw new Error("Canvas element not found");
   gpu.configureCanvas(canvas);
 
   const limits = gpu.adapter.limits;
-  const bytesPerCellInF = 9 * 2; // D2Q9 populations in f16 (SoA)
+  const bytesPerCellInF = 9 * 2;
   const maxStorageBytes = Math.min(
     limits.maxBufferSize,
     limits.maxStorageBufferBindingSize,
@@ -22,18 +21,13 @@ try {
     Math.floor(Math.sqrt(maxCellsByF)),
     limits.maxTextureDimension2D,
   );
-  const MAX_CAP = 1 << 11; //2048
+  const MAX_CAP = 1 << 11;
   const isSmallViewport = window.matchMedia("(max-width: 900px)").matches;
   const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
-  const initialResolution = isSmallViewport || isCoarsePointer ? 1 << 9 : 1 << 10; // 512 on mobile-ish devices, else 1024
+  const initialResolution = isSmallViewport || isCoarsePointer ? 1 << 9 : 1 << 10;
 
-  // Pass canvas to the controller
   const controller = new SimulationController(gpu, canvas, initialResolution);
-
-  // Initialize UI
   const ui = new UIController(controller, maxDim, MAX_CAP);
-
-  // Initial Start
   await controller.recreate(initialResolution, maxDim, MAX_CAP, "Von Kármán Street");
   ui.syncAll();
 } catch (e) {

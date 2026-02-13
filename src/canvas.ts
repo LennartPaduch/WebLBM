@@ -14,7 +14,7 @@ export class CanvasPainter {
   #Nx: number;
   #Ny: number;
 
-  #brushRadius = 3; // lattice cells
+  #brushRadius = 3;
   #mode: "solid" | "erase" = "solid";
   #isDrawing = false;
   #lastCell: { x: number; y: number } | null = null;
@@ -22,7 +22,7 @@ export class CanvasPainter {
 
   #handlers?: Handlers;
   #circleCache = new Map<number, Array<{ dy: number; span: number }>>();
-  #innerMargin = 0; // allow painting up to boundaries by default
+  #innerMargin = 0;
   #useRAFCoalescing: boolean;
   #pending: RowSpan[] = [];
   #pendingVal: number | null = null;
@@ -32,14 +32,8 @@ export class CanvasPainter {
     canvas: HTMLCanvasElement;
     Nx: number;
     Ny: number;
-    onPaint: PaintCallback; // receives lattice row spans + value
-    /**
-     * Optional: number of cells kept as an inner margin (unpaintable). Default 0.
-     */
+    onPaint: PaintCallback;
     innerMargin?: number;
-    /**
-     * Optional: if true (default), batches multiple pointer events and emits once per animation frame.
-     */
     coalesceWithRAF?: boolean;
   }) {
     this.#canvas = opts.canvas;
@@ -60,18 +54,12 @@ export class CanvasPainter {
   setModeErase() {
     this.#mode = "erase";
   }
-
-
-  /**
-   * Set the unpaintable safety margin from borders (in lattice cells).
-   * Set to 0 to allow painting up to the edge.
-   */
   setBoundsMargin(margin: number) {
     this.#innerMargin = Math.max(0, margin | 0);
   }
 
   enable() {
-    if (this.#handlers) return; // already enabled
+    if (this.#handlers) return;
     const onDown = this.#onPointerDown.bind(this);
     const onMove = this.#onPointerMove.bind(this);
     const onUpCancel = this.#onPointerUpCancel.bind(this);
@@ -94,8 +82,6 @@ export class CanvasPainter {
     this.#handlers = undefined;
     this.#flush(true);
   }
-
-  // --- pointer handlers ---
 
   #onPointerDown(e: PointerEvent) {
     this.#canvas.setPointerCapture?.(e.pointerId);
@@ -127,10 +113,10 @@ export class CanvasPainter {
     for (const evt of events) {
       const { x, y } = this.#canvasToCell(evt);
       if (!this.#withinInnerBounds(x, y)) continue;
-      // skip if same lattice cell as previous
+      // Skip duplicate lattice samples.
       if (last.x === x && last.y === y) continue;
 
-      // capsule raster between last and current sample
+      // Rasterize a capsule between samples for continuous strokes.
       const rows = this.#paintCapsule(last.x, last.y, x, y, this.#brushRadius);
       this.#mergeRowSpansInPlace(aggregated, rows);
 
@@ -149,8 +135,6 @@ export class CanvasPainter {
     this.#lastCell = null;
     this.#flush(true);
   }
-
-  // --- emit/coalescing ---
 
   #emit(rows: RowSpan[], val: number) {
     if (!this.#useRAFCoalescing) {
@@ -188,8 +172,6 @@ export class CanvasPainter {
     }
   }
 
-  // --- helpers ---
-
   #canvasToCell(e: PointerEvent) {
     const rect = this.#canvas.getBoundingClientRect();
     const xCss = e.clientX - rect.left;
@@ -198,10 +180,9 @@ export class CanvasPainter {
     let x = Math.floor((this.#Nx * xCss) / rect.width);
     let y = Math.floor((this.#Ny * yCss) / rect.height);
 
-    // flip Y because lattice y=0 is bottom but CSS y=0 is top
+    // Lattice y=0 is bottom; canvas y=0 is top.
     y = this.#Ny - 1 - y;
 
-    // clamp
     x = Math.min(this.#Nx - 1, Math.max(0, x));
     y = Math.min(this.#Ny - 1, Math.max(0, y));
     return { x, y };
@@ -212,15 +193,8 @@ export class CanvasPainter {
     return x >= m && x < this.#Nx - m && y >= m && y < this.#Ny - m;
   }
 
-  // --- span utilities ---
-
-  /**
-   * Merge row spans in-place: unions intervals that overlap/touch on the same row.
-   * This keeps the span list compact and avoids duplicates.
-   */
   #mergeRowSpansInPlace(into: RowSpan[], rows: RowSpan[]) {
     if (!rows.length) return;
-    // Build a map of y -> intervals (merged)
     const map = new Map<number, Array<{ x0: number; x1: number }>>();
 
     const add = (y: number, x0: number, x1: number) => {
@@ -229,15 +203,12 @@ export class CanvasPainter {
         arr = [];
         map.set(y, arr);
       }
-      // insert and merge (arr is tiny in practice, so linear is fine)
       let inserted = false;
       for (let i = 0; i < arr.length; i++) {
         const seg = arr[i];
-        // if overlaps or touches, union
         if (!(x1 < seg.x0 - 1 || x0 > seg.x1 + 1)) {
           seg.x0 = Math.min(seg.x0, x0);
           seg.x1 = Math.max(seg.x1, x1);
-          // merge forward if needed
           let j = i + 1;
           while (j < arr.length) {
             const nxt = arr[j];
@@ -257,19 +228,14 @@ export class CanvasPainter {
       if (!inserted) arr.push({ x0, x1 });
     };
 
-    // seed with existing "into"
     for (const r of into) add(r.y, r.x0, r.x1);
-    // add new rows
     for (const r of rows) add(r.y, r.x0, r.x1);
 
-    // write back compact list
     into.length = 0;
     for (const [y, arr] of map) {
       for (const seg of arr) into.push({ y, x0: seg.x0, x1: seg.x1 });
     }
   }
-
-  // --- circle & capsule rasterization ---
 
   #getCircleProfile(r: number) {
     let prof = this.#circleCache.get(r);
@@ -284,7 +250,6 @@ export class CanvasPainter {
     return prof;
   }
 
-  // returns row spans (does NOT write any buffers)
   #paintCircle(cx: number, cy: number, r: number): RowSpan[] {
     const rows: RowSpan[] = [];
     const prof = this.#getCircleProfile(r);
@@ -298,10 +263,6 @@ export class CanvasPainter {
     return rows;
   }
 
-  /**
-   * Rasterize a thick segment (capsule) between two lattice points with radius r.
-   * Produces row spans without per-step circle stamping.
-   */
   #paintCapsule(
     x0: number,
     y0: number,
@@ -312,7 +273,7 @@ export class CanvasPainter {
     if (x0 === x1 && y0 === y1) return this.#paintCircle(x0, y0, r);
 
     const rows: RowSpan[] = [];
-    // Ensure y0 <= y1 for iteration
+    // Iterate with ascending y for simpler bounds handling.
     if (y0 > y1) {
       [x0, x1, y0, y1] = [x1, x0, y1, y0];
     }
@@ -321,11 +282,9 @@ export class CanvasPainter {
     const yEnd = Math.min(this.#Ny - 1, Math.max(y0, y1) + r);
 
     for (let y = yStart; y <= yEnd; y++) {
-      // conservative x bounds to search within
       let left = Math.max(0, Math.min(x0, x1) - r);
       let right = Math.min(this.#Nx - 1, Math.max(x0, x1) + r);
 
-      // tighten with small integer searches at edges based on distance^2 to segment
       while (
         left <= right &&
         this.#dist2ToSegment(left, y, x0, y0, x1, y1) > r * r

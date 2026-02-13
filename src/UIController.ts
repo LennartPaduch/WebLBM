@@ -4,7 +4,7 @@ import { SimulationController } from "./SimulationController";
 
 
 export class UIController {
-  // Private UI Element References
+  // Private UI element references
   #settingsPanel!: HTMLDivElement;
   #showSettingsBtn!: HTMLButtonElement;
   #hideSettingsBtn!: HTMLButtonElement;
@@ -20,7 +20,7 @@ export class UIController {
 
   // Powers of two keep wrap indexing cheap in shaders (bitmasking instead of modulo).
   #PRESETS = [
-    1 << 8,/*256*/
+    1 << 8, /*256*/
     1 << 9, /*512*/
     1 << 10, /*1024*/
     1 << 11, /*2048*/
@@ -52,9 +52,6 @@ export class UIController {
     this.#setupListeners();
   }
 
-  /**
-   * Identifies existing DOM elements and dynamically builds the rest.
-   */
   #initElements() {
     this.#settingsPanel = document.getElementById("settings") as HTMLDivElement;
     this.#showSettingsBtn = document.getElementById(
@@ -81,7 +78,6 @@ export class UIController {
       "togglePause-btn",
     ) as HTMLButtonElement;
 
-    // 1. Build Resolution Select
     this.#resSelect = this.#createStyledSelect("resolution-select");
     this.#refreshResolutionOptions();
 
@@ -91,11 +87,9 @@ export class UIController {
     );
     paintSettings.prepend(resWrapper);
 
-    // 2. Populate Colormap & VisType
     this.#populateSelect(this.#colormapSelect, VisColormaps);
     this.#populateSelect(this.#visTypeSelect, VisTypes);
 
-    // 3. Populate Presets
     Object.keys(Presets).forEach((name) => {
       const opt = document.createElement("option");
       opt.value = name;
@@ -103,7 +97,6 @@ export class UIController {
       this.#sceneSelect.appendChild(opt);
     });
 
-    // 4. Build Brush Controls
     this.#createBrushControls(paintSettings);
 
     const statusContainer = document.createElement("div");
@@ -124,7 +117,7 @@ export class UIController {
 
     document.getElementById("paint-settings")?.appendChild(statusContainer);
 
-    // Mobile starts with pure rendering view; desktop starts with settings visible.
+    // Desktop starts with settings visible; mobile starts with the canvas unobstructed.
     this.#setSettingsVisible(!this.#isSmallViewport());
   }
 
@@ -133,10 +126,8 @@ export class UIController {
       clearInterval(this.#pollIntervalId);
     }
 
-    // We use setInterval because we don't need frame-perfect syncing for text updates.
-    // 500ms is a good balance between readability and responsiveness.
+    // Metrics text does not need frame-perfect updates.
     this.#pollIntervalId = window.setInterval(() => {
-      // If we are recreating the GPU buffers, do not attempt to read from LBM
       if (this.#isBusy || !this.#controller.lbm) {
         this.#mlupsDisplay.className = "block whitespace-pre-line";
         this.#mlupsDisplay.textContent = "Total: ---\nFluid: ---";
@@ -148,23 +139,21 @@ export class UIController {
       const totalCellCount = this.#controller.lbm.getCellcount();
       const fluidCellCount = this.#controller.lbm.getFluidCellcount();
 
-      // Avoid divide by zero on first run
       if (this.#lastPollTime > 0) {
-        const dt = now - this.#lastPollTime; // ms
+        const dt = now - this.#lastPollTime;
         const dSteps = currentSteps - this.#lastStepCount;
 
-        // MLUPS = (Cells * Steps) / (Seconds * 1,000,000)
-        // (Cells * Steps) / (ms * 1000)
         if (dt > 0 && dSteps >= 0) {
+          // MLUPS = (Cells * Steps) / (Seconds * 1,000,000)
+          //      = (Cells * Steps) / (Milliseconds * 1000)
           const totalMlups = (totalCellCount * dSteps) / (dt * 1000);
           const fluidMlups = (fluidCellCount * dSteps) / (dt * 1000);
           this.#mlupsDisplay.textContent =
             `Total: ${totalMlups.toFixed(2)} MLUPS\nFluid: ${fluidMlups.toFixed(2)} MLUPS`;
 
-          // Optional: Color code performance
           this.#mlupsDisplay.className = "block whitespace-pre-line text-green-400";
         } else if (dSteps < 0) {
-          // Counter reset (e.g. restart): start a fresh measurement window.
+          // Restart or resolution change reset the step counter.
           this.#lastPollTime = now;
           this.#lastStepCount = currentSteps;
           return;
@@ -176,7 +165,6 @@ export class UIController {
     }, 500);
   }
 
-  // This ensures inputs are visually disabled AND logically ignored
   async #withBusyLock(fn: () => Promise<void>) {
     if (this.#isBusy) return;
 
@@ -184,7 +172,7 @@ export class UIController {
       this.#setBusy(true);
       await fn();
 
-      // Reset metrics counters so we don't get a huge spike after a long load time
+      // Reset MLUPS baseline after long UI operations.
       if (this.#controller.lbm) {
         this.#lastPollTime = performance.now();
         this.#lastStepCount = this.#controller.lbm.tick;
@@ -201,7 +189,6 @@ export class UIController {
     const opacity = busy ? "0.5" : "1.0";
     const pointerEvents = busy ? "none" : "auto";
 
-    // List of heavy inputs
     const controls = [
       this.#resSelect,
       this.#sceneSelect,
@@ -221,15 +208,9 @@ export class UIController {
       }
     });
 
-    // Also disable canvas painting interaction if desired
-    // this.#controller.painter.canvas.style.pointerEvents = pointerEvents;
   }
 
-  /**
-   * Attaches all event logic.
-   */
   #setupListeners() {
-    // 1. Start the Polling Loop (Independent of Physics Loop)
     this.#startMetricsLoop();
 
     this.#bindFastPress(this.#showSettingsBtn, () => this.#setSettingsVisible(true));
@@ -241,7 +222,6 @@ export class UIController {
       this.#smallViewportQuery.addListener(onViewportChange);
     }
 
-    // 2. Wrap heavy listeners in the Lock
     this.#sceneSelect.addEventListener("change", () => {
       this.#withBusyLock(async () => {
         const presetName = this.#sceneSelect.value;
@@ -249,7 +229,7 @@ export class UIController {
         if (!preset) return;
         this.#controller.currentPresetName = presetName;
 
-        // Recreate if the preset changes resolution.
+        // Some presets pin a specific resolution.
         if (preset.resolution && preset.resolution !== this.#controller.N) {
           await this.#controller.recreate(
             preset.resolution,
@@ -264,10 +244,9 @@ export class UIController {
         const result = this.#buildPresetResult(presetName);
         if (!result) return;
 
-        // Apply mask
         this.#controller.lbm.setMask(result);
 
-        // Apply visualization preferences after simulation parameters are updated.
+        // Keep vis controls consistent with preset output.
         if (result.visType !== undefined) this.#updateVisType(result.visType);
         if (result.colormap !== undefined) this.#updateColormap(result.colormap);
 
@@ -288,7 +267,6 @@ export class UIController {
       });
     });
 
-    // Vis & Colormap Changes
     this.#colormapSelect.addEventListener("change", () =>
       this.#updateColormap(Number(this.#colormapSelect.value)),
     );
@@ -296,7 +274,6 @@ export class UIController {
       this.#updateVisType(Number(this.#visTypeSelect.value)),
     );
 
-    // Controls
     this.#togglePauseBtn.addEventListener("click", () => {
       this.#controller.lbm.togglePause();
       this.#syncPauseButton();
@@ -327,8 +304,6 @@ export class UIController {
     }
   }
 
-  // --- Helper Update Methods ---
-
   #updateColormap(val: number) {
     this.#colormapSelect.value = String(val);
     this.#controller.lbm.setVisColormap(val as VisColormap);
@@ -337,7 +312,7 @@ export class UIController {
   #updateVisType(val: number) {
     this.#visTypeSelect.value = String(val);
     if (val === VisTypes.VORTICITY) {
-      // On mode switch, default to a diverging map suited for signed vorticity.
+      // Diverging map is the default for signed fields.
       this.#updateColormap(VisColormaps.RdBu);
     }
     this.#controller.lbm.setVisType(val as VisType);
@@ -385,8 +360,6 @@ export class UIController {
       action();
     });
   }
-
-  // --- DOM Construction Helpers ---
 
   #refreshResolutionOptions() {
     this.#resSelect.innerHTML = "";
@@ -487,7 +460,7 @@ export class UIController {
   #buildPresetResult(presetName: string) {
     const preset = Presets[presetName];
     if (!preset) return null;
-    const params = resolveParams(preset /*, uiParamOverrides */);
+    const params = resolveParams(preset);
     const ctx = makeBuildContext(this.#controller.N, this.#controller.N, presetName, params);
     return preset.build(ctx);
   }

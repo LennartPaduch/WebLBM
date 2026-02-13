@@ -1,19 +1,6 @@
 import { CELL, VisTypes, VisColormaps, type VisType, type VisColormap } from "./LBM";
 
-/**
- * Goals:
- * - Presets are recipes: boundaries + shapes + optional randomness
- * - Easy to add new presets without duplicating boundary math
- * - Optional UI parameters (sliders/toggles/seed) without hard-coding values
- *
- * Note:
- * - With the current setup, EQ is primarily meaningful on the left/right boundaries
- *   (inlet/outlet). Presets below keep EQ on edges to stay compatible.
- */
-
 export type Side = "left" | "right" | "top" | "bottom";
-
-// --- Params (optional UI layer) ---------------------------------------------
 
 export type NumberParam = {
   kind: "number";
@@ -43,16 +30,13 @@ export type ParamValues = Record<string, number | boolean | string>;
 export interface SceneBuildResult {
   mask: Uint32Array;
 
-  // Fields the UI can apply immediately:
   visType?: VisType;
   colormap?: VisColormap;
 
-  // Simulation settings consumed by LBM when applying a preset:
   sim: {
     inletUx: number;
     inletUy?: number;
     tau: number;
-    rho0?: number;
   };
 }
 
@@ -62,18 +46,16 @@ export interface BuildContext {
   rng: Rng;
   params: ParamValues;
 
-  // convenience
-  X: (u: Unit) => number; // to x pixel
-  Y: (u: Unit) => number; // to y pixel
-  W: (u: Unit) => number; // to width in pixels (>=1)
-  H: (u: Unit) => number; // to height in pixels (>=1)
+  X: (u: Unit) => number;
+  Y: (u: Unit) => number;
+  W: (u: Unit) => number;
+  H: (u: Unit) => number;
 }
 
 export interface ScenePreset {
   description?: string;
   resolution?: number;
 
-  // defaults for quick selection (UI can override via params)
   visType?: VisType;
   colormap?: VisColormap;
 
@@ -89,12 +71,7 @@ export function resolveParams(preset: ScenePreset, overrides: ParamValues = {}):
   for (const [k, v] of Object.entries(overrides)) out[k] = v;
   return out;
 }
-
-
-
-// --- Units / coordinate helpers ---------------------------------------------
-
-export type Unit = number | { rel: number }; // rel: 0..1 of dimension
+export type Unit = number | { rel: number };
 export const rel = (v: number): Unit => ({ rel: v });
 
 function toPix(n: number, u: Unit): number {
@@ -115,16 +92,15 @@ function isSolidCell(v: number) {
 }
 
 function finalizeChannelBoundaries(b: MaskBuilder) {
-  // Always enforce top/bottom no-slip rows
   addTopBottomWalls(b);
 
-  // Left boundary: EQ only where the channel is open next to it
+  // EQ only where the adjacent interior cell is fluid.
   for (let y = 1; y <= b.ny - 2; y++) {
-    const open = !isSolidCell(b.mask[y * b.nx + 1]); // neighbor inside domain
+    const open = !isSolidCell(b.mask[y * b.nx + 1]);
     b.set(0, y, open ? CELL.EQ : CELL.SOLID);
   }
 
-  // Right boundary: EQ only where the channel is open next to it
+  // EQ only where the adjacent interior cell is fluid.
   for (let y = 1; y <= b.ny - 2; y++) {
     const open = !isSolidCell(b.mask[y * b.nx + (b.nx - 2)]);
     b.set(b.nx - 1, y, open ? CELL.EQ : CELL.SOLID);
@@ -134,13 +110,12 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-// Smooth ramp 0..1 (cosine easing)
 function easeCos(t: number) {
   t = Math.max(0, Math.min(1, t));
+  // Smooth 0..1 ramp.
   return 0.5 - 0.5 * Math.cos(Math.PI * t);
 }
 
-// Make everything outside a center band SOLID
 function solidifyOutsideBand(b: MaskBuilder, halfHeightAtX: (x: number) => number) {
   const midY = Math.floor(b.ny * 0.5);
 
@@ -149,22 +124,17 @@ function solidifyOutsideBand(b: MaskBuilder, halfHeightAtX: (x: number) => numbe
     const yLo = Math.max(1, midY - hh);
     const yHi = Math.min(b.ny - 2, midY + hh);
 
-    // bottom solid: y=1 .. yLo-1
     if (yLo > 1) b.fillRect(x, 1, 1, yLo - 1, CELL.SOLID);
-    // top solid: y=yHi+1 .. ny-2
     if (yHi < b.ny - 2) b.fillRect(x, yHi + 1, 1, (b.ny - 2) - yHi, CELL.SOLID);
   }
 }
 
-// --- Deterministic RNG ------------------------------------------------------
-
 export interface Rng {
-  next(): number; // [0, 1)
+  next(): number;
   int(min: number, maxInclusive: number): number;
 }
 
 function hashStringToSeed(s: string): number {
-  // simple FNV-1a-ish
   let h = 2166136261 >>> 0;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
@@ -210,8 +180,6 @@ export function makeBuildContext(
     H: (u) => clamp(toLen(ny, u), 1, ny),
   };
 }
-
-// --- Mask builder ------------------------------------------------------------
 
 class MaskBuilder {
   readonly nx: number;
@@ -259,7 +227,7 @@ class MaskBuilder {
   }
 
   line(x0: number, y0: number, x1: number, y1: number, v: number) {
-    // Bresenham
+    // Bresenham integer raster.
     let dx = Math.abs(x1 - x0);
     let sx = x0 < x1 ? 1 : -1;
     let dy = -Math.abs(y1 - y0);
@@ -277,7 +245,7 @@ class MaskBuilder {
   }
 
   fillPolygon(points: Array<{ x: number; y: number }>, v: number) {
-    // Ray casting, scan bounding box (good enough for preset generation)
+    // Ray-casting fill over polygon bounding box.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of points) {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
@@ -309,10 +277,8 @@ function pointInPoly(px: number, py: number, poly: Array<{ x: number; y: number 
   return inside;
 }
 
-// --- Boundary templates ------------------------------------------------------
-
 function addTopBottomWalls(b: MaskBuilder) {
-  // bottom wall y=0, top wall y=ny-1
+  // No-slip top and bottom walls.
   for (let x = 0; x < b.nx; x++) {
     b.set(x, 0, CELL.SOLID);
     b.set(x, b.ny - 1, CELL.SOLID);
@@ -338,14 +304,12 @@ function addInletWindowLeft(
   inletType: number = CELL.EQ,
   restType: number = CELL.SOLID
 ) {
-  // Clamp to avoid top/bottom wall rows
+  // Keep inlet away from fixed wall rows.
   y0 = clamp(y0, 1, b.ny - 2);
   y1 = clamp(y1, 1, b.ny - 2);
   if (y1 < y0) [y0, y1] = [y1, y0];
 
-  // set whole left side to restType first
   for (let y = 1; y <= b.ny - 2; y++) b.set(0, y, restType);
-  // window to inletType
   for (let y = y0; y <= y1; y++) b.set(0, y, inletType);
 }
 
@@ -356,7 +320,7 @@ function addOutletRight(b: MaskBuilder, outletType: number = CELL.EQ) {
 function makeDefaultChannel(b: MaskBuilder, inletWindowRelHeight = 1.0) {
   addTopBottomWalls(b);
 
-  // centered inlet window on left
+  // Centered inlet window on the left boundary.
   const winH = Math.max(1, Math.floor((b.ny - 2) * inletWindowRelHeight));
   let y0 = Math.floor((b.ny - 1) * 0.5 - winH * 0.5);
   let y1 = y0 + winH - 1;
@@ -366,8 +330,6 @@ function makeDefaultChannel(b: MaskBuilder, inletWindowRelHeight = 1.0) {
   addInletWindowLeft(b, y0, y1, CELL.EQ, CELL.SOLID);
   addOutletRight(b, CELL.EQ);
 }
-
-// --- Presets ----------------------------------------------------------------
 
 export const Presets: Record<string, ScenePreset> = {
   "Empty Tunnel": {
@@ -466,10 +428,10 @@ export const Presets: Record<string, ScenePreset> = {
     build: ({ nx, ny, params }) => {
       const b = new MaskBuilder(nx, ny, CELL.FLUID);
       makeDefaultChannel(b, Number(params.inletWindow));
-
+      
       const xStep = Math.floor(nx * Number(params.stepX));
       const h = Math.floor((ny - 2) * Number(params.stepH));
-      // step occupies bottom part starting near inlet
+      // Bottom step obstacle.
       b.fillRect(1, 1, clamp(xStep, 1, nx - 2), clamp(h, 1, ny - 2), CELL.SOLID);
 
       return {
@@ -527,10 +489,10 @@ export const Presets: Record<string, ScenePreset> = {
 
         return inletHalf;
       };
-
+      
       solidifyOutsideBand(b, halfHeightAtX);
 
-      // BCs last (auto-matches the opening at x=1 and x=nx-2)
+      // Apply BCs after geometry so openings match channel walls.
       finalizeChannelBoundaries(b);
 
       return {
